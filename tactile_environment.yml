@@ -1,4 +1,4 @@
-name: /workspace-SR004.nfs2/kovtun/tactile/conda_tactile_env
+name: conda_tactile_env
 channels:
   - conda-forge
   - defaults
@@ -273,4 +273,3 @@ dependencies:
       - xxhash==3.7.0
       - yarl==1.23.0
       - zstandard==0.25.0
-prefix: /workspace-SR004.nfs2/kovtun/tactile/conda_tactile_env
