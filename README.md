@@ -1,3 +1,7 @@
+# Research on SSL methods for tactile data
+
+To install conda enironment for experiments, refer to `tactile_environment.yml`
+
 # Multisensory Touch Representations for full hand dexterous manipulation
 
 <p align="center">
