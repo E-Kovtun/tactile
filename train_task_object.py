@@ -1,0 +1,165 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
+
+
+from typing import List, Optional
+import os
+
+import hydra
+import numpy as np
+import torch
+import torch.utils.data as data
+from hydra.core.hydra_config import HydraConfig
+from lightning.fabric import seed_everything
+from omegaconf import DictConfig, OmegaConf, open_dict
+from copy import deepcopy
+from torch.utils.tensorboard import SummaryWriter
+
+import wandb
+
+from tactile_ssl.trainer import Trainer  # noqa: E402
+from tactile_ssl.utils import get_local_rank, get_node_id
+from tactile_ssl.utils.logging import get_pylogger, print_config_tree  # noqa: E402
+from tactile_ssl.data.d360.utils import get_weights, get_experiment_name, get_modality_tag
+from tactile_ssl.utils.combined_dataset import CombinedDataset
+from tactile_ssl.data.xela.utils import compute_xela_normalization
+
+logger = get_pylogger(__name__)
+
+OmegaConf.register_new_resolver("int_multiply", lambda a, b: int(a * b))
+OmegaConf.register_new_resolver("int_divide", lambda a, b: a // b)
+OmegaConf.register_new_resolver("d360_expt_name", get_experiment_name)
+OmegaConf.register_new_resolver("d360_modal_tag", get_modality_tag)
+
+
+def init_tensorboard(cfg: DictConfig):
+    writer = SummaryWriter(log_dir=cfg.log_dir)
+    return writer
+
+
+def get_xela_dataset(dataset_cfg: DictConfig, dataset_name: str, d_id: int, object_class: Optional[int] = None):
+    data_path = f"{dataset_cfg.data_path}"
+    data_files = os.listdir(data_path)
+    dataset_name_exists = True in [f in f"{dataset_name}" for f in data_files]
+    if not dataset_name_exists:
+        print(f"Dataset {dataset_name} not found")
+        return None
+    dataset = hydra.utils.instantiate(
+        dataset_cfg,
+        data_path=f"{data_path}/{dataset_name}/{d_id}",
+        object_class=object_class,
+    )
+    return dataset
+
+
+def get_dataloaders_magnetic_based(cfg: DictConfig):
+    data_cfg = cfg.data
+
+    if data_cfg.sensor == "xela":
+
+        train_datasets, val_datasets, test_datasets = [], [], []
+        dataset_list: List = data_cfg.dataset_list
+        object_classes = []
+        object_class_sizes = []
+        for dataset_l in dataset_list:
+            assert dataset_l.type == "teleop"
+            train_dataset_ids = dataset_l.train_dataset_ids
+            val_dataset_ids = dataset_l.val_dataset_ids
+            test_dataset_ids = dataset_l.test_dataset_ids
+            for obj in dataset_l.sequence_list:
+                object_classes.append(obj)
+                object_class_sizes.append(0)
+                for d_id in train_dataset_ids:
+                    dataset = get_xela_dataset(
+                        dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
+                    )
+                    if dataset is not None:
+                        object_class_sizes[-1] += len(dataset)
+                    train_datasets.append(dataset)
+                for d_id in val_dataset_ids:
+                    val_datasets.append(
+                        get_xela_dataset(
+                            dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
+                        )
+                    )
+                for d_id in test_dataset_ids:
+                    test_datasets.append(
+                        get_xela_dataset(
+                            dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
+                        )
+                    )
+
+        print(f"Object class sizes: {object_class_sizes}")
+        object_class_ratios = object_class_sizes / np.sum(object_class_sizes)
+        object_class_weights = 1 / object_class_ratios
+        object_class_weights = object_class_weights / np.sum(object_class_weights)
+        print(f"Object class weights: {object_class_weights}")
+
+        xela_mean, xela_std = compute_xela_normalization(train_datasets)
+        logger.info(f"Compute Xela normalization: mean={xela_mean}, std={xela_std}")
+
+        with open_dict(cfg):
+            cfg.data.normalization.mean = xela_mean.tolist()
+            cfg.data.normalization.std = xela_std.tolist()
+            cfg.data.object_classes = object_classes
+            cfg.data.object_class_weights = object_class_weights.tolist()
+
+        for dataset in train_datasets + val_datasets + test_datasets:
+            dataset.update_normalization(xela_mean, xela_std)
+        train_dset = data.ConcatDataset(train_datasets)
+        val_dset = data.ConcatDataset(val_datasets)
+        test_dset = data.ConcatDataset(test_datasets)
+
+    return train_dset, val_dset, test_dset
+
+
+def get_dataloaders(cfg: DictConfig):
+    train_dset, val_dset, test_dset = get_dataloaders_magnetic_based(cfg)
+    train_dataloader = data.DataLoader(train_dset, **cfg.data.train_dataloader)
+    val_dataloader = data.DataLoader(val_dset, **cfg.data.val_dataloader)
+    test_dataloader = data.DataLoader(test_dset, **cfg.data.val_dataloader)
+    return train_dataloader, val_dataloader, test_dataloader
+
+
+def train(cfg: DictConfig):
+
+    logger.info("Instantiating tensorboard ...")
+    writer = init_tensorboard(cfg.tensorboard)
+
+    print_config_tree(cfg, resolve=True, save_to_file=True)
+    if cfg.get("seed"):
+        seed_everything(cfg.seed, workers=True)
+    _GLOBAL_SEED = cfg.seed
+    np.random.seed(_GLOBAL_SEED)
+    torch.manual_seed(_GLOBAL_SEED)
+    torch.backends.cudnn.benchmark = True
+
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(cfg)
+
+    logger.info(f"Instantiating model <{cfg.task._target_}>")
+    model = hydra.utils.instantiate(cfg.task)
+
+    trainer = Trainer(tb_logger=writer, **cfg.trainer)
+
+    trainer.fit(model, train_dataloader, val_dataloader, ckpt_path=cfg.ckpt_path)
+    trainer.evaluate(model, test_dataloader)
+
+    writer.close()
+
+
+# @hydra.main(version_base="1.3", config_path="config")
+@hydra.main(version_base="1.3", config_path="config", config_name="default_task.yaml")
+def main(cfg: DictConfig):
+    """
+    Main function to train the model
+    """
+    train(cfg)
+
+
+if __name__ == "__main__":
+    torch.set_float32_matmul_precision("medium")
+    main()

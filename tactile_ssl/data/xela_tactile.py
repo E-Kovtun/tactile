@@ -294,7 +294,7 @@ class XelaSSLDataset(data.Dataset):
         sensor_data = torch.from_numpy(sensor_data).float()
         joint_angles = torch.from_numpy(joint_angles).float()
         sensor_poses = torch.from_numpy(joint_poses).float()
-        # sensor_data_ = torch.cat([sensor_data, sensor_poses[..., :3]], dim=-1)
+        # sensor_data = torch.cat([sensor_data, sensor_poses[..., :3]], dim=-1)
         sample_dict.update({"sensor": sensor_data})
         sample_dict.update({"joint_angles": joint_angles})
         sample_dict.update({"sensor_poses": sensor_poses})

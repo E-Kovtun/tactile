@@ -1,17 +1,41 @@
 _target_: tactile_ssl.algorithm.XelaDINOv2Module
+# encoder:
+#   _target_: tactile_ssl.model.xela_base
+#   in_dim: 368 # total number of xela sensors in hand
+#   in_chans: 3 # 6 # 3 xela mag channels + 3 position channels
+#   sequence_length: 10
+#   time_chunk_size: 10
+#   num_register_tokens: 1
+#   pos_embed_fn: learned
+#   with_masktoken: True
+#   drop_path_rate: 0.3
+#   drop_path_uniform: True
+#   normalization: ${data.normalization}
+#   causal: False
+
+# encoder:
+#   _target_: tactile_ssl.model.XelaLinear
+#   in_dim: 368 # total number of xela sensors in hand
+#   in_chans: 6 # 3 xela mag channels + 3 position channels
+#   embed_dim: 192
+#   sequence_length: 10
+#   time_chunk_size: 10
+#   pos_embed_fn: learned
+#   num_register_tokens: 1
+#   with_masktoken: True
+#   normalization: ${data.normalization}
+
 encoder:
-  _target_: tactile_ssl.model.xela_base
+  _target_: tactile_ssl.model.XelaGAT
   in_dim: 368 # total number of xela sensors in hand
   in_chans: 6 # 3 xela mag channels + 3 position channels
+  embed_dim: 192
   sequence_length: 10
   time_chunk_size: 10
-  num_register_tokens: 1
   pos_embed_fn: learned
+  num_register_tokens: 1
   with_masktoken: True
-  drop_path_rate: 0.3
-  drop_path_uniform: True
   normalization: ${data.normalization}
-  causal: False
 
 dino_head:
   _partial_: True
@@ -65,16 +89,16 @@ online_probes:
     loss_fn:
       _target_: torch.nn.MSELoss
 
-  - _target_: tactile_ssl.probe.online_probe.OnlineProbeModule
-    probe_name: "object_classification"
-    decoder:
-      _target_: tactile_ssl.probe.classification.LinearClassifier
-      input_embed_dim: ${model_embed_dim}
-      classes: ${data.object_classes}
-      class_weights: ${data.object_class_weights}
-    loss_fn:
-      _partial_: true
-      _target_: torch.nn.CrossEntropyLoss
+  # - _target_: tactile_ssl.probe.online_probe.OnlineProbeModule
+  #   probe_name: "object_classification"
+  #   decoder:
+  #     _target_: tactile_ssl.probe.classification.LinearClassifier
+  #     input_embed_dim: ${model_embed_dim}
+  #     classes: ${data.object_classes}
+  #     class_weights: ${data.object_class_weights}
+  #   loss_fn:
+  #     _partial_: true
+  #     _target_: torch.nn.CrossEntropyLoss
 
-online_probes_lrs: [1e-4, 1e-4]
+online_probes_lrs: [1e-4] #, 1e-4]
 reconstruction_log_freq: 20

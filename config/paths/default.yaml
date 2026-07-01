@@ -1,7 +1,7 @@
-data_root: /home/sparsh/datasets/
-log_dir: /home/sparsh/tmp/experiments/
-encoder_checkpoint_root: /home/sparsh/checkpoints/
-tacbench_dir: /home/sparsh/tacbench
+data_root: /workspace-SR004.nfs2/kovtun/tactile/sparsh-skin-dataset
+log_dir: /workspace-SR004.nfs2/kovtun/tactile/experiments/
+tensorboard_dir: /workspace-SR004.nfs2/kovtun/tactile/lightning_logs/
+encoder_checkpoint_root: /workspace-SR004.nfs2/kovtun/tactile/hf_checkpoints/sparsh-skin/
 
 output_dir: ${hydra:runtime.output_dir}
 work_dir: ${hydra:runtime.cwd}

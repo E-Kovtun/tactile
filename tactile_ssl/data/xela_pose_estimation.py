@@ -164,7 +164,8 @@ class RelativePoseDataset(data.Dataset):
             baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=xela_array.shape[0])
             xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
 
-        xela_array = np.concatenate([xela_array[..., 1:], sensor_positions], axis=-1)
+        # xela_array = np.concatenate([xela_array[..., 1:], sensor_positions], axis=-1)
+        xela_array = xela_array[..., 1:]
 
         base_T_object = read_pose_data(base_T_object, pose_timestamps, self.pose_nominal_freq)
         base_T_object = base_T_object[..., 1:]  # Strip the timestamps
@@ -239,6 +240,55 @@ class RelativePoseDataset(data.Dataset):
         return train_dset, val_dset
 
     @staticmethod
+    def create_train_val_test_from_files(data_path, urdf_path, baseline_signal_path, config):
+        full_train_object_paths = [p for p in (Path(data_path) / "train").iterdir() if p.is_dir()]
+        full_train_dataset_list = []
+        for object_path in full_train_object_paths:
+            full_train_dataset_list.extend([p for p in object_path.iterdir() if p.is_dir()])
+
+        full_train_dataset_list_shuffled = np.random.permutation(full_train_dataset_list)
+        full_train_len = len(full_train_dataset_list)
+        num_train_files = int(full_train_len * (1 - config.val_ratio))
+
+        train_dataset_list = full_train_dataset_list_shuffled[:num_train_files]
+        val_dataset_list = full_train_dataset_list_shuffled[num_train_files:]
+
+        train_data_budget = config.train_data_budget 
+        train_data_budget = round(train_data_budget * len(train_dataset_list))
+        train_dataset_list = list(np.random.choice(train_dataset_list, train_data_budget, replace=False))
+
+        val_data_budget = config.val_data_budget
+        val_data_budget = round(val_data_budget * len(val_dataset_list))
+        val_dataset_list = list(np.random.choice(val_dataset_list, val_data_budget, replace=False))
+
+        train_dset = RelativePoseDataset(
+                        config=config,
+                        data_list=train_dataset_list,
+                        urdf_path=urdf_path,
+                        baseline_signal_path=baseline_signal_path,
+                    )
+
+        val_dset = RelativePoseDataset(
+                        config=config,
+                        data_list=val_dataset_list,
+                        urdf_path=urdf_path,
+                        baseline_signal_path=baseline_signal_path,
+                    )
+
+        test_object_paths = [p for p in (Path(data_path) / "val").iterdir() if p.is_dir()]
+        test_dataset_list = []
+        for object_path in test_object_paths:
+            test_dataset_list.extend([p for p in object_path.iterdir() if p.is_dir()])
+        
+        test_dset = RelativePoseDataset(
+                        config=config,
+                        data_list=test_dataset_list,
+                        urdf_path=urdf_path,
+                        baseline_signal_path=baseline_signal_path,
+                    )
+        return train_dset, val_dset, test_dset
+
+    @staticmethod
     def get_single_sequence(config, data_path, urdf_path, baseline_signal_path, dataset_name):
         data_path = Path(data_path) / dataset_name
         dset = RelativePoseDataset(
@@ -275,16 +325,16 @@ class RelativePoseDataset(data.Dataset):
 
         sample = {}
 
-        if self.xela_image_output:
-            xela_data = sensor_data[..., 0:3]
-            tactile_image = []
-            for i in range(0, xela_data.shape[0], 10):
-                tactile_value = xela_flat_to_grid(xela_data[i])
-                img = self.tactile_img.get(type="whole_hand", tactile_values=tactile_value)
-                img = self.tactile_img_tf(img)
-                tactile_image.append(img)
-            tactile_image = torch.stack(tactile_image, dim=0)
-            sample["image"] = tactile_image.float()
+        # if self.xela_image_output:
+        #     xela_data = sensor_data[..., 0:3]
+        #     tactile_image = []
+        #     for i in range(0, xela_data.shape[0], 10):
+        #         tactile_value = xela_flat_to_grid(xela_data[i])
+        #         img = self.tactile_img.get(type="whole_hand", tactile_values=tactile_value)
+        #         img = self.tactile_img_tf(img)
+        #         tactile_image.append(img)
+        #     tactile_image = torch.stack(tactile_image, dim=0)
+        #     sample["image"] = tactile_image.float()
 
         sample["timestamp"] = torch.tensor(timestamp).float()
         sample["sensor"] = torch.tensor(sensor_data).float()

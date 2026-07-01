@@ -5,3 +5,4 @@ from .mae import MAEModule  # noqa F401
 from .d360_dino import D360DINOModule  # noqa F401
 from .xela_dinov2 import XelaDINOv2Module  # noqa F401
 from .xela_mae import XelaMAEModule  # noqa F402
+from .xela_jepa import XelaJEPAModule

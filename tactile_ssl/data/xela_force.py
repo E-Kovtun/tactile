@@ -181,7 +181,8 @@ class ForceDataset(data.Dataset):
             baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=xela_array.shape[0])
             xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
 
-        xela_array = np.concatenate([xela_array[..., 1:], sensor_positions], axis=-1)
+        # xela_array = np.concatenate([xela_array[..., 1:], sensor_positions], axis=-1)
+        xela_array = xela_array[..., 1:]
 
         _, gt_force_data = read_force_data(
             force_data, force_timestamps, max_abs_forceXYZ=[1.0, 1.0, 1.0], nominal_freq=self.force_nominal_freq

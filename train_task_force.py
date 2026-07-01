@@ -13,6 +13,7 @@ import torch
 import torch.utils.data as data
 from omegaconf import DictConfig, OmegaConf, open_dict
 from hydra.core.hydra_config import HydraConfig
+from torch.utils.tensorboard import SummaryWriter
 
 import wandb
 from lightning.fabric import seed_everything
@@ -34,17 +35,9 @@ OmegaConf.register_new_resolver("d360_modal_used_tag", get_modality_used_tag)
 OmegaConf.register_new_resolver("capitalize", lambda s: s.title())
 
 
-def init_wandb(cfg: DictConfig):
-    wandb.init(
-        project=cfg.project,
-        entity=cfg.entity,
-        dir=cfg.save_dir,
-        id=f"{cfg.id}_{get_local_rank()}",
-        group=cfg.group,
-        tags=cfg.tags,
-        notes=cfg.notes,
-    )
-    return wandb
+def init_tensorboard(cfg: DictConfig):
+    writer = SummaryWriter(log_dir=cfg.log_dir)
+    return writer
 
 
 def get_dataloader_xela(cfg: DictConfig):
@@ -82,6 +75,48 @@ def get_dataloader_xela(cfg: DictConfig):
     train_dataloader = data.DataLoader(train_dset, **cfg.data.train_dataloader)
     val_dataloader = data.DataLoader(val_dset, **cfg.data.val_dataloader)
     return train_dataloader, val_dataloader
+
+
+def get_train_val_test_dataloader_xela(cfg: DictConfig):
+    data_cfg = cfg.data
+
+    train_dset, test_dset = hydra.utils.instantiate(data_cfg.dataset)
+
+    train_dset_size = int(len(train_dset) * data_cfg.train_val_ratio)
+    train_dset, val_dset = data.random_split(train_dset, [train_dset_size, len(train_dset) - train_dset_size])
+
+    if hasattr(data_cfg, "max_train_data"):
+        train_dset_size = min(len(train_dset), data_cfg.max_train_data)
+        train_dset, _ = data.random_split(train_dset, [train_dset_size, len(train_dset) - train_dset_size])
+
+    if hasattr(data_cfg, "max_val_data"):
+        val_dset_size = min(len(val_dset), data_cfg.max_val_data)
+        val_dset, _ = data.random_split(val_dset, [val_dset_size, len(val_dset) - val_dset_size])
+
+    # adjust training dataset size
+    train_dset_size = int(len(train_dset) * data_cfg.train_data_budget)
+    train_dset, _ = data.random_split(train_dset, [train_dset_size, len(train_dset) - train_dset_size])
+
+    val_dset_size = int(len(val_dset) * data_cfg.val_data_budget)
+    val_dset, _ = data.random_split(val_dset, [val_dset_size, len(val_dset) - val_dset_size])
+
+    print("Dataset sizes")
+    print(f"\t Train dataset size: {len(train_dset)}")
+    print(f"\t Val dataset size: {len(val_dset)}")
+    print(f"\t Test dataset size: {len(test_dset)}")
+
+    # sampler_cfg = cfg.data.get("sampler", None)
+    # if sampler_cfg is not None:
+    #     train_sampler = hydra.utils.instantiate(sampler_cfg, dataset=train_dset.dataset)
+    #     val_sampler = hydra.utils.instantiate(sampler_cfg, dataset=val_dset.dataset)
+    #     train_dataloader = data.DataLoader(train_dset, sampler=train_sampler, **cfg.data.train_dataloader)
+    #     val_dataloader = data.DataLoader(val_dset, sampler=val_sampler, **cfg.data.val_dataloader)
+    #     return train_dataloader, val_dataloader
+
+    train_dataloader = data.DataLoader(train_dset, **cfg.data.train_dataloader)
+    val_dataloader = data.DataLoader(val_dset, **cfg.data.val_dataloader)
+    test_dataloader = data.DataLoader(test_dset, **cfg.data.test_dataloader)
+    return train_dataloader, val_dataloader, test_dataloader
 
 
 def get_dataloaders_d360_based(cfg: DictConfig):
@@ -282,7 +317,8 @@ def get_dataloaders(cfg: DictConfig):
     elif "d360" in data_cfg.sensor:
         train_dataloader, val_dataloader = get_dataloaders_d360_based(cfg)
     elif data_cfg.sensor == "xela":
-        train_dataloader, val_dataloader = get_dataloader_xela(cfg)
+        train_dataloader, val_dataloader, test_dataloader = get_train_val_test_dataloader_xela(cfg)
+        return train_dataloader, val_dataloader, test_dataloader
     else:
         raise NotImplementedError("Sensor type not implemented yet.")
     return train_dataloader, val_dataloader
@@ -296,8 +332,8 @@ def attempt_resume(cfg: DictConfig):
         if not os.path.exists(f"{cfg.paths.output_dir}/checkpoints/"):
             logger.warning(f"Unable to resume: No checkpoints found for experiment with id {job_id}")
             return False, cfg
-        if not os.path.exists(f"{cfg.paths.output_dir}/wandb/"):
-            logger.warning(f"Unable to resume: No wandb logs found for experiment with id {job_id}")
+        if not os.path.exists(f"{cfg.paths.output_dir}/lightning_logs/"):
+            logger.warning(f"Unable to resume: No tensorboard logs found for experiment with id {job_id}")
             return False, cfg
         if not os.path.exists(f"{cfg.paths.output_dir}/config.yaml"):
             logger.warning("Could not find a config.yaml file in the resume directory. Using the current config.")
@@ -308,9 +344,8 @@ def attempt_resume(cfg: DictConfig):
         ckpt_path = f"{cfg.paths.output_dir}/checkpoints/"
         OmegaConf.update(cfg, "ckpt_path", ckpt_path, force_add=True)
         experiment_name = cfg.experiment_name
-        cfg.wandb.id = f"{job_id}_{experiment_name}"
         logger.info(
-            f"Resuming experiment {job_id} with wandb_id: {cfg.wandb.id} from latest checkpoint at {cfg.ckpt_path}"
+            f"Resuming experiment {job_id} from latest checkpoint at {cfg.ckpt_path}"
         )
         return True, cfg
     return False, cfg
@@ -319,10 +354,10 @@ def attempt_resume(cfg: DictConfig):
 def train(cfg: DictConfig):
     resume_state, cfg = attempt_resume(cfg)
 
-    logger.info("Instantiating wandb ...")
-    wandb = init_wandb(cfg.wandb)
+    logger.info("Instantiating tensorboard ...")
+    writer = init_tensorboard(cfg.tensorboard)
+    
     if not resume_state:
-        wandb.config.update(OmegaConf.to_container(cfg, resolve=True))
         OmegaConf.save(cfg, f"{cfg.paths.output_dir}/config.yaml")
 
     print_config_tree(cfg, resolve=True, save_to_file=True)
@@ -334,16 +369,17 @@ def train(cfg: DictConfig):
     torch.backends.cudnn.benchmark = True
 
     logger.info(f"Instantiating dataset & dataloaders for <{cfg.data.dataset._target_}>")
-    train_dataloader, val_dataloader = get_dataloaders(cfg)
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(cfg)
 
     logger.info(f"Instantiating model <{cfg.task._target_}>")
     model = hydra.utils.instantiate(cfg.task)
 
-    trainer = Trainer(wandb_logger=wandb, **cfg.trainer)
+    trainer = Trainer(tb_logger=writer, **cfg.trainer)
 
     trainer.fit(model, train_dataloader, val_dataloader, ckpt_path=cfg.ckpt_path)
+    trainer.evaluate(model, test_dataloader)
 
-    wandb.finish()
+    writer.close()
 
 
 # @hydra.main(version_base="1.3", config_path="config")

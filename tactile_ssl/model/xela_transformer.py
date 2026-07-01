@@ -88,13 +88,13 @@ class XelaTransformer(SignalTransformer):
             self.register_buffer("xela_mean", torch.tensor([0, 0, 0]))
             self.register_buffer("xela_std", torch.tensor([1, 1, 1]))
         print(f"Xela mean: {self.xela_mean}, Xela std: {self.xela_std}")
-        # self.patch_embed = PatchEmbed1d(
-        #     modal_chans=in_chans,
-        #     modal_lens=sequence_length,
-        #     chunk_size=self.time_chunk_size,
-        #     embed_dim=self.embed_dim,
-        # )
-        self.patch_embed = nn.Linear(in_chans, self.embed_dim)
+        self.patch_embed = PatchEmbed1d(
+            modal_chans=in_chans,
+            modal_lens=sequence_length,
+            chunk_size=self.time_chunk_size,
+            embed_dim=self.embed_dim,
+        )
+        # self.patch_embed = nn.Linear(in_chans, self.embed_dim)
         self.taxeltypes = ["4x4", "4x6", "curved"]
         self.taxeltype_embed = nn.Parameter(torch.zeros(3, self.embed_dim))
 
@@ -111,7 +111,6 @@ class XelaTransformer(SignalTransformer):
 
     def normalize(self, x: torch.Tensor):
         if hasattr(self, "xela_mean") and hasattr(self, "xela_std"):
-            x = einops.rearrange(x, "b t n (k c) -> b t n k c", c=self.in_chans)
             if self.in_chans == 3:
                 x = (x - self.xela_mean) / self.xela_std
             elif self.in_chans == 6:
@@ -121,17 +120,16 @@ class XelaTransformer(SignalTransformer):
                 x = (x - xela_mean) / xela_std
             else:
                 raise ValueError("Bad number of channels, must be 3 or 6")
-            x = einops.rearrange(x, "b t n k c -> b t n (k c)")
         return x
 
     def pre_embed(self, x: torch.Tensor):
         b = x.shape[0]
         x = self.normalize(x)
 
-        # x = einops.rearrange(x, "b t n c -> (b n) c t")
+        x = einops.rearrange(x, "b t n c -> (b n) c t")
 
         sensor_embed = self.patch_embed(x)
-        # sensor_embed = einops.rearrange(sensor_embed, "(b n) c t -> b t n c", b=b)
+        sensor_embed = einops.rearrange(sensor_embed, "(b n) c t -> b t n c", b=b)
 
         # We add a learnable embedding to identify different types of xela taxels
         prev_idx = 0

@@ -1,6 +1,6 @@
 defaults:
   - paths: default
-  - wandb: wandb_config
+  - tensorboard: tensorboard_config
   - data: xela
   - algorithm: byol_alexnet
   - override hydra/job_logging: colorlog
@@ -43,9 +43,3 @@ trainer:
   checkpoint_frequency: 10
   log_frequency: 500
   save_checkpoint_dir: ${paths.output_dir}/checkpoints
-
-hydra:
-  job:
-    id: ${now:%Y.%m.%d}-${now:%H-%M}
-  run:
-    dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}

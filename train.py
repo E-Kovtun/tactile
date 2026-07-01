@@ -19,6 +19,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from copy import deepcopy
 
 import wandb
+from torch.utils.tensorboard import SummaryWriter
 
 from tactile_ssl.trainer import Trainer  # noqa: E402
 from tactile_ssl.utils import get_local_rank, get_node_id
@@ -34,17 +35,9 @@ OmegaConf.register_new_resolver("d360_expt_name", get_experiment_name)
 OmegaConf.register_new_resolver("d360_modal_tag", get_modality_tag)
 
 
-def init_wandb(cfg: DictConfig):
-    wandb.init(
-        project=cfg.project,
-        entity=cfg.entity,
-        dir=cfg.save_dir,
-        id=f"{cfg.id}_{get_node_id()}_{get_local_rank()}",
-        group=cfg.group,
-        tags=cfg.tags,
-        notes=cfg.notes,
-    )
-    return wandb
+def init_tensorboard(cfg: DictConfig):
+    writer = SummaryWriter(log_dir=cfg.log_dir)
+    return writer
 
 
 def get_dataloaders_magnetic_based(cfg: DictConfig):
@@ -280,10 +273,9 @@ def attempt_resume(cfg: DictConfig):
 def train(cfg: DictConfig):
     resume_state, cfg = attempt_resume(cfg)
     logger.info(f"Resume state: {resume_state}, {cfg.ckpt_path}")
-    logger.info("Instantiating wandb ...")
-    wandb = init_wandb(cfg.wandb)
+    logger.info("Instantiating tensorboard ...")
+    writer = init_tensorboard(cfg.tensorboard)
     if ~resume_state:
-        wandb.config.update(OmegaConf.to_container(cfg, resolve=True))
         OmegaConf.save(cfg, f"{cfg.paths.output_dir}/config.yaml")
 
     print_config_tree(cfg, resolve=True, save_to_file=True)
@@ -298,14 +290,14 @@ def train(cfg: DictConfig):
     logger.info(f"Instantiating dataset & dataloaders for <{sensors_type}>")
     train_dataloader, val_dataloader = get_dataloaders(cfg)
 
-    trainer = Trainer(wandb_logger=wandb, **cfg.trainer)
+    trainer = Trainer(tb_logger=writer, **cfg.trainer)
 
     logger.info(f"Instantiating algorithm <{cfg.algorithm._target_}>")
     algorithm = hydra.utils.instantiate(cfg.algorithm)
 
     trainer.fit(algorithm, train_dataloader, val_dataloader, ckpt_path=cfg.ckpt_path)
 
-    wandb.finish()
+    writer.close()
 
 
 @hydra.main(version_base="1.3", config_path="config", config_name="default.yaml")

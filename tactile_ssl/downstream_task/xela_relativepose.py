@@ -157,29 +157,11 @@ class XelaRelativePoseModule(SLModule):
             self.model_encoder.time_chunk_size,
         )
         self.train_pred, self.train_gt = [], []
-        self.val_pred = []
-        self.val_gt = []
+        self.val_pred, self.val_gt = [], []
+        self.test_pred, self.test_gt = [], []
         self.target_mean, self.target_std = None, None
 
     def on_fit_start(self, train_dataloader=None, val_dataloader=None, trainer_instance=None):
-        if trainer_instance is not None:
-            trainer_instance.wandb.define_metric("train/loss", summary="min")
-            trainer_instance.wandb.define_metric("train/rmse_x", summary="min")
-            trainer_instance.wandb.define_metric("train/rmse_y", summary="min")
-            trainer_instance.wandb.define_metric("train/rmse_theta", summary="min")
-            trainer_instance.wandb.define_metric("val/loss", summary="min")
-            trainer_instance.wandb.define_metric("val/rmse_x", summary="min")
-            trainer_instance.wandb.define_metric("val/rmse_y", summary="min")
-            trainer_instance.wandb.define_metric("val/rmse_theta", summary="min")
-
-            trainer_instance.wandb.define_metric("train/auc_x", summary="max")
-            trainer_instance.wandb.define_metric("train/auc_y", summary="max")
-            trainer_instance.wandb.define_metric("train/auc_theta", summary="max")
-            trainer_instance.wandb.define_metric("val/auc_x", summary="max")
-            trainer_instance.wandb.define_metric("val/auc_y", summary="max")
-            trainer_instance.wandb.define_metric("val/auc_theta", summary="max")
-
-        # Loader.subset.dataset
         self.init_stats(train_dataloader, trainer_instance.fabric.device)
     
     def init_stats(self, dataloader, device):
@@ -248,36 +230,20 @@ class XelaRelativePoseModule(SLModule):
             self.target_std = self.model_task.target_std
         return self.step(batch, batch_idx)
 
+    @torch.no_grad()
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
+        if self.target_mean is None or self.target_std is None:
+            self.target_mean = self.model_task.target_mean
+            self.target_std = self.model_task.target_std
+        return self.step(batch, batch_idx)
+
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
         if trainer_instance is not None and trainer_instance.should_log:
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/loss": outputs["loss"],
-                    f"global_{label}_step": step,
-                }
-            )
+            trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"], step)
             metric = "batch_rmse"
-            if self.model_task.discretize is not None:
-                metric = "batch_accuracy"
-
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/{metric}_x": outputs[f"{metric}"][0].item(),
-                    f"global_{label}_step": step,
-                }
-            )
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/{metric}_y": outputs[f"{metric}"][1].item(),
-                    f"global_{label}_step": step,
-                }
-            )
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/{metric}_z": outputs[f"{metric}"][-1].item(),
-                    f"global_{label}_step": step,
-                }
-            )
+            trainer_instance.writer.add_scalar(f"{label}/{metric}_x", outputs[f"{metric}"][0].item(), step)
+            trainer_instance.writer.add_scalar(f"{label}/{metric}_y", outputs[f"{metric}"][1].item(), step)
+            trainer_instance.writer.add_scalar(f"{label}/{metric}_theta", outputs[f"{metric}"][2].item(), step)
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         self.train_pred.append(outputs["y_pred"])
@@ -288,6 +254,16 @@ class XelaRelativePoseModule(SLModule):
         self.val_pred.append(outputs["y_pred"])
         self.val_gt.append(batch["relative_object_pose"])
         self.log_metrics(outputs, trainer_instance.global_val_step, trainer_instance, "val")
+
+    def on_test_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
+        self.test_pred.append(outputs["y_pred"])
+        self.test_gt.append(batch["relative_object_pose"])
+
+    def on_train_epoch_end(self, trainer_instance=None):
+        return self.on_epoch_end(trainer_instance, stage="train")
+
+    def on_validation_epoch_end(self, trainer_instance=None):
+        return self.on_epoch_end(trainer_instance, stage="val")
 
     def on_epoch_end(self, trainer_instance=None, stage="train"):
         target_gt = None
@@ -325,59 +301,50 @@ class XelaRelativePoseModule(SLModule):
         theta_threshold = 5.0
         auc_x_1mm = np.mean(np.abs(relative_pose_gt[..., 0] - relative_pose_pred[..., 0]) < xy_threshold)
         auc_y_1mm = np.mean(np.abs(relative_pose_gt[..., 1] - relative_pose_pred[..., 1]) < xy_threshold)
-        # auc_theta_1deg = np.mean(np.abs(relative_pose_gt[..., 2] - relative_pose_pred[..., 2]) < 1.0)  # 1 degree
-        auc_theta_1deg = np.mean(np.abs(relative_pose_gt[..., 2] - relative_pose_pred[..., 2]) < theta_threshold)  # 1 degree
+        auc_theta_1deg = np.mean(np.abs(relative_pose_gt[..., 2] - relative_pose_pred[..., 2]) < theta_threshold) 
 
-        idxs = np.arange(0, len(relative_pose_gt), len(relative_pose_gt) // 10)
-        relative_pose_gt = relative_pose_gt[idxs]
-        relative_pose_pred = relative_pose_pred[idxs]
-        figs = []
-        for i in range(10):
-            fig, axs = plt.subplots(3, 1, figsize=(10, 10))
-            curr_relative_pose_gt = relative_pose_gt[i]
-            curr_relative_pose_pred = relative_pose_pred[i]
-            time = np.arange(curr_relative_pose_gt.shape[0])
-            axs[0].plot(time, curr_relative_pose_gt[:, 0], color="r", label="x", linestyle="--")
-            axs[1].plot(time, curr_relative_pose_gt[:, 1], color="g", label="y", linestyle="--")
-            axs[2].plot(
-                time,
-                curr_relative_pose_gt[:, 2],
-                color="b",
-                label=r"$\theta$",
-                linestyle="--",
-            )
+        # idxs = np.arange(0, len(relative_pose_gt), len(relative_pose_gt) // 10)
+        # relative_pose_gt = relative_pose_gt[idxs]
+        # relative_pose_pred = relative_pose_pred[idxs]
+        # figs = []
+        # for i in range(10):
+        #     fig, axs = plt.subplots(3, 1, figsize=(10, 10))
+        #     curr_relative_pose_gt = relative_pose_gt[i]
+        #     curr_relative_pose_pred = relative_pose_pred[i]
+        #     time = np.arange(curr_relative_pose_gt.shape[0])
+        #     axs[0].plot(time, curr_relative_pose_gt[:, 0], color="r", label="x", linestyle="--")
+        #     axs[1].plot(time, curr_relative_pose_gt[:, 1], color="g", label="y", linestyle="--")
+        #     axs[2].plot(
+        #         time,
+        #         curr_relative_pose_gt[:, 2],
+        #         color="b",
+        #         label=r"$\theta$",
+        #         linestyle="--",
+        #     )
 
-            axs[0].plot(time, curr_relative_pose_pred[:, 0], color="r", label="x_pred")
-            axs[1].plot(time, curr_relative_pose_pred[:, 1], color="g", label="y_pred")
-            axs[2].plot(time, curr_relative_pose_pred[:, 2], color="b", label=r"$\theta$_pred")
-            for ax in axs:
-                ax.legend()
-            figs.append(fig)
+        #     axs[0].plot(time, curr_relative_pose_pred[:, 0], color="r", label="x_pred")
+        #     axs[1].plot(time, curr_relative_pose_pred[:, 1], color="g", label="y_pred")
+        #     axs[2].plot(time, curr_relative_pose_pred[:, 2], color="b", label=r"$\theta$_pred")
+        #     for ax in axs:
+        #         ax.legend()
+        #     figs.append(fig)
 
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
+        epoch = trainer_instance.current_epoch
 
         if trainer_instance is not None:
-            trainer_instance.wandb.log(
-                {
-                    f"{stage}/outputs": [wandb.Image(fig) for fig in figs],
-                }
-            )
+            # trainer_instance.wandb.log(
+            #     {
+            #         f"{stage}/outputs": [wandb.Image(fig) for fig in figs],
+            #     }
+            # )
             for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_theta], ["", "_x", "_y", "_theta"])):
-                trainer_instance.wandb.log(
-                    {
-                        f"{stage}/rmse{axis}": rmse_val,
-                        f"global_{stage}_step": step,
-                    }
-                )
+                trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, epoch)
+
             for i, (auc_val, axis) in enumerate(zip([auc_x_1mm, auc_y_1mm, auc_theta_1deg], ["_x", "_y", "_theta"])):
-                trainer_instance.wandb.log(
-                    {
-                        f"{stage}/auc{axis}": auc_val,
-                        f"global_{stage}_step": step,
-                    }
-                )
-        for fig in figs:
-            plt.close(fig)
+                trainer_instance.writer.add_scalar(f"{stage}/acc{axis}", auc_val, epoch)
+        # for fig in figs:
+        #     plt.close(fig)
         if stage == "train":
             self.train_pred = []
             self.train_gt = []
@@ -387,8 +354,28 @@ class XelaRelativePoseModule(SLModule):
         else:
             raise ValueError(f"Stage {stage} not recognized")
 
-    def on_validation_epoch_end(self, trainer_instance=None):
-        return self.on_epoch_end(trainer_instance, stage="val")
+    def on_test_end(self, trainer_instance=None, stage="test"):
 
-    def on_train_epoch_end(self, trainer_instance=None):
-        return self.on_epoch_end(trainer_instance, stage="train")
+        relative_pose_gt = torch.cat(self.test_gt, dim=0).cpu().numpy()
+        relative_pose_pred = torch.cat(self.test_pred, dim=0).cpu().numpy()
+            
+        rmse = np.sqrt(np.mean((relative_pose_gt - relative_pose_pred) ** 2))
+        rmse_x = np.sqrt(np.mean((relative_pose_gt[:, :, 0] - relative_pose_pred[:, :, 0]) ** 2))
+        rmse_y = np.sqrt(np.mean((relative_pose_gt[:, :, 1] - relative_pose_pred[:, :, 1]) ** 2))
+        rmse_theta = np.sqrt(np.mean((relative_pose_gt[:, :, 2] - relative_pose_pred[:, :, 2]) ** 2))
+
+        xy_threshold = 0.02  # 1mm
+        theta_threshold = 5.0
+        auc_x_1mm = np.mean(np.abs(relative_pose_gt[..., 0] - relative_pose_pred[..., 0]) < xy_threshold)
+        auc_y_1mm = np.mean(np.abs(relative_pose_gt[..., 1] - relative_pose_pred[..., 1]) < xy_threshold)
+        auc_theta_1deg = np.mean(np.abs(relative_pose_gt[..., 2] - relative_pose_pred[..., 2]) < theta_threshold) 
+
+
+        for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_theta], ["", "_x", "_y", "_theta"])):
+            trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, 0)
+
+        for i, (auc_val, axis) in enumerate(zip([auc_x_1mm, auc_y_1mm, auc_theta_1deg], ["_x", "_y", "_theta"])):
+            trainer_instance.writer.add_scalar(f"{stage}/acc{axis}", auc_val, 0)
+
+
+

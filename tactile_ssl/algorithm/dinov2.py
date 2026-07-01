@@ -113,20 +113,15 @@ class DINOv2Module(Module, nn.Module):
         ssl_loss = outputs["ssl_loss"]
         if trainer_instance is not None and trainer_instance.should_log:
             step = trainer_instance.step
-            trainer_instance.wandb.log({f"{stage}/loss": loss, f"global_{stage}_step": step})
-            trainer_instance.wandb.log({f"{stage}/ssl_loss": ssl_loss, f"global_{stage}_step": step})
+            trainer_instance.writer.add_scalar(f"{stage}/loss", loss, step)
+            trainer_instance.writer.add_scalar(f"{stage}/ssl_loss", ssl_loss, step)
 
             for probe in self.online_probes:
                 outputs_probe = {k: v for k, v in outputs.items() if k.startswith(probe.probe_name)}
-                for k, v in outputs_probe.items():
-                    trainer_instance.wandb.log({f"{stage}/{k}": v, f"global_{stage}_step": step})
+                # for k, v in outputs_probe.items():
+                #     trainer_instance.writer.add_scalar(f"{stage}/{k}", v, step)
 
-            trainer_instance.wandb.log(
-                {
-                    f"{stage}/teacher_temperature": self.current_teacher_temp,
-                    f"global_{stage}_step": step,
-                }
-            )
+            trainer_instance.writer.add_scalar(f"{stage}/teacher_temperature", self.current_teacher_temp, step)
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         assert self.teacher_encoder is not None, "target encoder has not been created"
@@ -143,12 +138,7 @@ class DINOv2Module(Module, nn.Module):
                     self.student_encoder,
                     moving_average_decay,
                 )
-        trainer_instance.wandb.log(
-            {
-                "train/moving_average_decay": moving_average_decay,
-                "global_train_step": trainer_instance.step,
-            }
-        )
+        trainer_instance.writer.add_scalar("train/moving_average_decay", moving_average_decay, trainer_instance.step)
         self.log_on_batch_end(outputs, stage="train", trainer_instance=trainer_instance)
 
     def on_validation_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
@@ -161,20 +151,21 @@ class DINOv2Module(Module, nn.Module):
                 Xorg = outputs["gt_img"] if "gt_img" in outputs.keys() else None
                 if Xorg is not None:
                     self.val_reconstruction_error.append(torch.mean((Xpred - Xorg) ** 2, dim=[1, 2, 3]))
-                img_logger(
-                    wandb=trainer_instance.wandb,
-                    global_step=step,
-                    predictions=Xpred,
-                    X=Xorg,
-                    label="val",
-                )
+                # img_logger(
+                #     wandb=trainer_instance.wandb,
+                #     global_step=step,
+                #     predictions=Xpred,
+                #     X=Xorg,
+                #     label="val",
+                # )
 
     def on_validation_epoch_end(self, trainer_instance=None):
         if len(self.val_reconstruction_error) > 0:
             reconstruction_error = torch.cat(self.val_reconstruction_error, dim=0)
             root_mean_square_error = torch.sqrt(torch.mean(reconstruction_error, dim=0))
             print(f"RMSE: {root_mean_square_error}")
-            trainer_instance.wandb.log({"val/rmse": root_mean_square_error})
+            # trainer_instance.wandb.log({"val/rmse": root_mean_square_error})
+            trainer_instance.writer.add_scalar("val/rmse", root_mean_square_error, trainer_instance.step)
             self.val_reconstruction_error = []
 
     def _sample_block_size(self, height, width, scale):

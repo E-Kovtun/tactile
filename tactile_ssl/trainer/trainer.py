@@ -1,3 +1,4 @@
+from pickle import TRUE
 import os
 import time
 from collections.abc import Mapping
@@ -14,6 +15,9 @@ from tqdm import tqdm
 from tactile_ssl.algorithm.module import Module  # noqa F401
 from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.utils.signal_connector import SignalConnector
+from tactile_ssl.utils.early_stopping import EarlyStopping
+from lightning.fabric.strategies import DDPStrategy
+import datetime
 
 log = get_pylogger(__name__)
 
@@ -27,7 +31,7 @@ class Trainer:
         precision: Union[str, int] = "32-true",
         plugins: Optional[Union[str, Any]] = None,
         callbacks: Optional[Union[List[Any], Any]] = None,
-        wandb_logger=None,
+        tb_logger=None,
         max_epochs: Optional[int] = 1000,
         max_steps: Optional[int] = None,
         grad_accum_steps: int = 1,
@@ -43,6 +47,11 @@ class Trainer:
         checkpoint_interval_type: Literal["linear", "log"] = "linear",
         max_task_checkpoints: Optional[int] = None,
         save_probe_weights_only: Optional[bool] = False,
+        early_stopping_enabled: bool = False, 
+        early_stopping_patience: Optional[int] = 10, 
+        early_stopping_delta: Optional[float] = 0.0, 
+        early_stopping_verbose: Optional[bool] = True, 
+        early_stopping_checkpoint_name: Optional[str] = "best"
     ) -> None:
         """
         Args:
@@ -97,7 +106,7 @@ class Trainer:
         num_nodes = int(os.environ.get("SLURM_NNODES", 1))
         self.fabric = L.Fabric(
             accelerator=accelerator,
-            strategy=strategy,
+            strategy=DDPStrategy(timeout=datetime.timedelta(hours=2)),#strategy,
             devices=devices,
             precision=precision,
             plugins=plugins,
@@ -107,7 +116,7 @@ class Trainer:
         self._connector = self.fabric._connector
         self._signal_connector = SignalConnector(self)
         self._signal_connector.register_signal_handlers()
-        self.wandb = wandb_logger
+        self.writer = tb_logger
 
         self.global_step = 0
         self.global_val_step = 0
@@ -150,6 +159,15 @@ class Trainer:
                 self.task_ep_save_ckpt[0] = 0
             else:
                 self.task_ep_save_ckpt = np.linspace(0, self.max_epochs, max_task_checkpoints, dtype=np.int32)
+
+        self.use_early_stopping = early_stopping_enabled
+        if self.use_early_stopping: 
+            self.early_stopping = EarlyStopping(
+                patience=early_stopping_patience,
+                verbose=early_stopping_verbose,
+                delta=early_stopping_delta,
+            )
+            self.early_stopping_checkpoint_name = early_stopping_checkpoint_name
 
     def fit(
         self,
@@ -236,6 +254,12 @@ class Trainer:
 
             if self.should_validate:
                 self.val_loop(module, val_loader, limit_batches=self.limit_val_batches)
+                if self.use_early_stopping and (self.avg_val_loss is not None):
+                    self.early_stopping(self.avg_val_loss)
+                    if self.early_stopping.save_checkpoint_flag:
+                        self.save_early_stopping_checkpoint(self.early_stopping_checkpoint_name)
+                    if self.early_stopping.early_stop:
+                        self.should_stop = True
 
             self.step_scheduler(scheduler_cfg, level="epoch", current_value=self.current_epoch)
             self.step_wd_scheduler(wd_scheduler_cfg, level="epoch", current_value=self.current_epoch)
@@ -307,7 +331,7 @@ class Trainer:
                 if self.grad_clip_norm:
                     grad_norm = self.fabric.clip_gradients(module, optimizer, max_norm=self.grad_clip_norm)
                     if grad_norm is not None:
-                        self.wandb.log({"grad_norm": grad_norm})
+                        self.writer.add_scalar("grad_norm", grad_norm, self.global_step)
                 optimizer.step()
                 optimizer.zero_grad()
                 self.fabric.call("on_before_zero_grad", optimizer)
@@ -377,6 +401,8 @@ class Trainer:
 
         iterable = self.progbar_wrapper(val_loader, total=min(len(val_loader), limit_batches), desc="Validation")
 
+        total_val_loss = 0
+        total_val_batches = 0
         for batch_idx, batch in enumerate(iterable):
             # end epoch if stopping training completely or max batches for this epoch reached
             if self.should_stop or batch_idx >= limit_batches:
@@ -391,12 +417,19 @@ class Trainer:
             self.fabric.call("on_validation_batch_end", out, batch, batch_idx)
             self._current_val_return = out
 
+            total_val_loss += out["loss"].item()
+            total_val_batches += 1
+
             self._format_iterable(iterable, self._current_val_return["loss"], "val")
 
             self.global_val_step += 1
 
         module.on_validation_epoch_end(self)
         self.fabric.call("on_validation_epoch_end")
+
+        self.avg_val_loss = None
+        if total_val_batches > 0:
+            self.avg_val_loss = total_val_loss / total_val_batches
 
         self.fabric.call("on_validation_model_train")
         torch.set_grad_enabled(True)
@@ -424,6 +457,51 @@ class Trainer:
 
         return loss
 
+    def evaluate(
+        self,
+        module: Module,
+        test_loader: torch.utils.data.DataLoader,
+        ckpt_path_to_eval: Optional[str] = None,
+    ):
+    
+        self.fabric.launch()
+
+        test_loader = self.fabric.setup_dataloaders(test_loader, use_distributed_sampler=self.use_distributed_sampler)
+        module = self.fabric.setup(module)
+
+        if (ckpt_path_to_eval is None) and self.use_early_stopping:
+            ckpt_path_to_eval = os.path.join(self.checkpoint_dir, f"{self.early_stopping_checkpoint_name}.ckpt")
+
+        module.load_task(ckpt_path_to_eval)
+        self.test_loop(module, test_loader)
+
+    def test_loop(
+        self,
+        module: Module,
+        test_loader: Optional[torch.utils.data.DataLoader],
+        limit_batches: Union[int, float] = float("inf"),
+    ):
+
+        torch.set_grad_enabled(False)
+
+        iterable = self.progbar_wrapper(test_loader, total=min(len(test_loader), limit_batches), desc="Test")
+
+        for batch_idx, batch in enumerate(iterable):
+            if batch_idx >= limit_batches:
+                break
+
+            out = module.test_step(batch, batch_idx)
+            out = apply_to_collection(out, torch.Tensor, lambda x: x.detach())
+
+            module.on_test_batch_end(out, batch, batch_idx, self)
+            self.fabric.call("on_test_batch_end", out, batch, batch_idx)
+            self._current_test_return = out
+
+            self._format_iterable(iterable, self._current_test_return["loss"], "test")
+
+        module.on_test_end(self)
+        self.fabric.call("on_test_end")
+
     def step_wd_scheduler(
         self,
         wd_scheduler_cfg: Optional[object],
@@ -440,7 +518,7 @@ class Trainer:
             return
 
         new_wd = wd_scheduler_cfg["wd_scheduler"].step()
-        self.wandb.log({"weight_decay": new_wd})
+        self.writer.add_scalar("weight_decay", new_wd, self.global_step)
 
     def step_scheduler(
         self,
@@ -497,7 +575,7 @@ class Trainer:
             scheduler_cfg["scheduler"].step(monitor)
 
         for i, _ in enumerate(scheduler_cfg["scheduler"].optimizer.param_groups):
-            self.wandb.log({f"lr_{i}": scheduler_cfg["scheduler"].get_last_lr()[i]})
+            self.writer.add_scalar("lr_{i}", scheduler_cfg["scheduler"].get_last_lr()[i], self.global_step)
 
     @property
     def should_validate(self) -> bool:
@@ -554,6 +632,16 @@ class Trainer:
             raise RuntimeError(f"Unused Checkpoint Values: {remainder}")
         log.info(f"Loaded checkpoint from {path}")
 
+    def get_model_state_dict(self):
+        if self.save_probe_weights_only:
+            # save only model weights that start with model_task
+            state_dict = self.state["model"].state_dict()
+            task_keys = [k for k in state_dict.keys() if k.startswith("model_task")]
+            state_dict = {k: state_dict[k] for k in task_keys}
+        else:
+            state_dict = self.state["model"].state_dict()
+        return state_dict
+
     def save_checkpoint(self, state: Optional[Mapping] = None) -> None:
         """Saves a checkpoint to the ``checkpoint_dir``
 
@@ -563,21 +651,21 @@ class Trainer:
         """
 
         if self.max_task_checkpoints is not None:
-            if self.save_probe_weights_only:
-                # save only model weights that start with model_task
-                state_dict = self.state["model"].state_dict()
-                task_keys = [k for k in state_dict.keys() if k.startswith("model_task")]
-                state_dict = {k: state_dict[k] for k in task_keys}
-                torch.save(state_dict, os.path.join(self.checkpoint_dir, f"epoch-{self.current_epoch:04d}.pth"))
-            else:
-                state_dict = self.state["model"].state_dict()
-                torch.save(state_dict, os.path.join(self.checkpoint_dir, f"epoch-{self.current_epoch:04d}.pth"))
-
+            state_dict = self.get_model_state_dict()
+            torch.save(state_dict, os.path.join(self.checkpoint_dir, f"epoch-{self.current_epoch:04d}.pth"))
         else:
             self.fabric.save(
                 os.path.join(self.checkpoint_dir, f"epoch-{self.current_epoch:04d}.ckpt"),
                 self.state,
             )
+
+    def save_early_stopping_checkpoint(self, early_stopping_checkpoint_name: Optional[str] = 'best') -> None:
+        # state_dict = self.get_model_state_dict()
+        # torch.save(state_dict, os.path.join(self.checkpoint_dir, f"{early_stopping_checkpoint_name}.pth"))  
+        self.fabric.save(
+            os.path.join(self.checkpoint_dir,  f"{early_stopping_checkpoint_name}.ckpt"),
+            self.state,
+        )
 
     def save_latest_checkpoint(self, state: Optional[Mapping] = None) -> None:
         """Saves a checkpoint to the ``checkpoint_dir``

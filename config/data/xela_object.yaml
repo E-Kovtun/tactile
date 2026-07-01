@@ -9,7 +9,15 @@ train_dataloader:
 val_dataloader:
   batch_size: 64
   num_workers: 8
-  shuffle: True
+  shuffle: False
+  drop_last: True
+  pin_memory: True
+  persistent_workers: True
+
+test_dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: False
   drop_last: True
   pin_memory: True
   persistent_workers: True
@@ -20,7 +28,7 @@ normalization:
 object_classes: null
 object_class_weights: null
 
-window_time: 0.1 # 0.01
+window_time: 0.1 
 window_overlap: 0.0
 interpolating_freq: 100
 
@@ -42,8 +50,9 @@ dataset_list:
       - popcorn
       - loofah
       - slipper
-    train_dataset_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    val_dataset_ids: [9]
+    train_dataset_ids: [0, 1, 2, 3, 4, 5, 6, 7]
+    val_dataset_ids: [8]
+    test_dataset_ids: [9]
 
     dataset:
       _target_: tactile_ssl.data.xela_tactile.XelaSSLDataset

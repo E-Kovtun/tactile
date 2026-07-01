@@ -3,14 +3,14 @@ defaults:
   - override /paths: default
   - override /tensorboard: tensorboard_config
   - override /data: xela
-  - override /algorithm: xela_dinov2
+  - override /algorithm: xela_jepa
   - _self_
 
 model_size: tiny
 ckpt_path: ~
 
-task_name: pretrain_gat_encoder # pretrain_nopos_linear_encoder
-ssl_name: dinov2
+task_name: pretrain_transformer_encoder 
+ssl_name: jepa
 ssl_model_size: tiny
 experiment_name: ${task_name}_${ssl_name}
 seed: 42
@@ -21,15 +21,10 @@ hydra:
   run:
     dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}
 
-run_name: ${now:%Y.%m.%d}_${now:%H-%M}
+run_name: upd_masks_${now:%Y.%m.%d}_${now:%H-%M}
 
 
 trainer:
   max_epochs: 500
   validation_frequency: 5
   save_checkpoint_dir: ${paths.output_dir}/checkpoints
-
-# algorithm:
-#   centering: centering
-#   encoder:
-#     _target_: tactile_ssl.model.xela_${model_size}

@@ -161,41 +161,16 @@ class ForceSLModule(SLModule):
 
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
         if trainer_instance is not None and trainer_instance.should_log:
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/loss": outputs["loss"],
-                    f"global_{label}_step": step,
-                }
-            )
+            trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"], step)
 
             metric = "batch_rmse"
 
             if  self.only_normal_force:
-                trainer_instance.wandb.log(
-                    {
-                        f"{label}/{metric}_Fz": outputs[f"{metric}"].item(),
-                        f"global_{label}_step": step,
-                    }
-                )
+                trainer_instance.writer.add_scalar(f"{label}/{metric}_Fz", outputs[f"{metric}"].item(), step)
             else:
-                trainer_instance.wandb.log(
-                    {
-                        f"{label}/{metric}_Fx": outputs[f"{metric}"][0].item(),
-                        f"global_{label}_step": step,
-                    }
-                )
-                trainer_instance.wandb.log(
-                    {
-                        f"{label}/{metric}_Fy": outputs[f"{metric}"][1].item(),
-                        f"global_{label}_step": step,
-                    }
-                )
-                trainer_instance.wandb.log(
-                    {
-                        f"{label}/{metric}_Fz": outputs[f"{metric}"][2].item(),
-                        f"global_{label}_step": step,
-                    }
-                )
+                trainer_instance.writer.add_scalar(f"{label}/{metric}_Fx", outputs[f"{metric}"][0].item(), step)
+                trainer_instance.writer.add_scalar(f"{label}/{metric}_Fy", outputs[f"{metric}"][1].item(), step)
+                trainer_instance.writer.add_scalar(f"{label}/{metric}_Fz",outputs[f"{metric}"][2].item(), step)
             
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
@@ -218,14 +193,14 @@ class ForceSLModule(SLModule):
         im_corr = plot_correlation(forces_gt, forces_pred)
         img_err, img_cone = plot_forces_error(forces_gt, forces_pred)
 
-        if trainer_instance is not None:
-            trainer_instance.wandb.log(
-                {
-                    "val/correlation": trainer_instance.wandb.Image(im_corr),
-                    "val/error": trainer_instance.wandb.Image(img_err),
-                    "val/error_cone": trainer_instance.wandb.Image(img_cone),
-                }
-            )
+        # if trainer_instance is not None:
+        #     trainer_instance.wandb.log(
+        #         {
+        #             "val/correlation": trainer_instance.wandb.Image(im_corr),
+        #             "val/error": trainer_instance.wandb.Image(img_err),
+        #             "val/error_cone": trainer_instance.wandb.Image(img_cone),
+        #         }
+        #     )
 
         self.val_pred = []
         self.val_gt = []
@@ -345,35 +320,14 @@ class D360ForceSLModule(D360SLModule):
 
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
         if trainer_instance is not None and trainer_instance.should_log:
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/loss": outputs["loss"],
-                    f"global_{label}_step": step,
-                }
-            )
-
+            trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"], step)
             metric = "batch_rmse"
 
             if not self.only_normal_force:
+                trainer_instance.writer.add_scalar(f"{label}/{metric}_Fx", outputs[f"{metric}"][0].item(), step)
+                trainer_instance.writer.add_scalar(f"{label}/{metric}_Fy", outputs[f"{metric}"][1].item(), step)
 
-                trainer_instance.wandb.log(
-                    {
-                        f"{label}/{metric}_Fx": outputs[f"{metric}"][0].item(),
-                        f"global_{label}_step": step,
-                    }
-                )
-                trainer_instance.wandb.log(
-                    {
-                        f"{label}/{metric}_Fy": outputs[f"{metric}"][1].item(),
-                        f"global_{label}_step": step,
-                    }
-                )
-            trainer_instance.wandb.log(
-                {
-                    f"{label}/{metric}_Fz": outputs[f"{metric}"][-1].item(),
-                    f"global_{label}_step": step,
-                }
-            )
+            trainer_instance.writer.add_scalar(f"{label}/{metric}_Fz", outputs[f"{metric}"][-1].item(), step)
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         self.log_metrics(outputs, trainer_instance.global_step, trainer_instance)  # type: ignore
@@ -542,7 +496,7 @@ class XelaForceLinearProbe(nn.Module):
 class XelaForceSLModule(ForceSLModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(self.model_encoder, XelaTransformer), "Model encoder must be a XelaTransformer"
+        # assert isinstance(self.model_encoder, XelaTransformer), "Model encoder must be a XelaTransformer"
         self.sequence_length, self.time_chunk_size = (
             self.model_encoder.sequence_length,
             self.model_encoder.time_chunk_size,
@@ -550,30 +504,12 @@ class XelaForceSLModule(ForceSLModule):
         self.train_pred, self.train_gt = [], []
         self.val_pred = []
         self.val_gt = []
+        self.test_pred, self.test_gt = [], []
         self.target_mean, self.target_std, self.target_max = None, None, None
         self.only_normal_force = self.model_task.only_normal_force
     
     def on_fit_start(self, train_dataloader=None, val_dataloader=None, trainer_instance=None):
-        if trainer_instance is not None:
-            trainer_instance.wandb.define_metric("train/loss", summary="min")
-            trainer_instance.wandb.define_metric("train/rmse_Fx", summary="min")
-            trainer_instance.wandb.define_metric("train/rmse_Fy", summary="min")
-            trainer_instance.wandb.define_metric("train/rmse_Fz", summary="min")
-            trainer_instance.wandb.define_metric("val/loss", summary="min")
-            trainer_instance.wandb.define_metric("val/rmse_Fx", summary="min")
-            trainer_instance.wandb.define_metric("val/rmse_Fy", summary="min")
-            trainer_instance.wandb.define_metric("val/rmse_Fz", summary="min")
-
         self.init_stats(train_dataloader, trainer_instance.fabric.device)
-        # Loader.subset.dataset
-        # train_dset = train_dataloader.dataset.dataset
-        # if not hasattr(train_dset, "target_mean"):
-        #     train_dset = train_dset.dataset
-
-        # target_mean = torch.tensor(train_dset.target_mean).float().to(trainer_instance.fabric.device)
-        # target_std = torch.tensor(train_dset.target_std).float().to(trainer_instance.fabric.device)
-        # target_max = torch.tensor(train_dset.target_max).float().to(trainer_instance.fabric.device)
-        # self.model_task.update_target_stats(target_mean, target_std, target_max)
 
     def init_stats(self, dataloader, device):
         train_dset = dataloader.dataset
@@ -584,15 +520,11 @@ class XelaForceSLModule(ForceSLModule):
             n-=1
             if n==0:
                 raise ValueError("train_dset is not a data.Dataset")
-                
-        # if not hasattr(train_dset, "target_mean"):
-        #     train_dset = train_dset.dataset
 
         target_mean = torch.tensor(train_dset.target_mean).float().to(device)
         target_std = torch.tensor(train_dset.target_std).float().to(device)
         target_max = torch.tensor(train_dset.target_max).float().to(device)
         self.model_task.update_target_stats(target_mean, target_std, target_max)
-
 
     def forward(self, batch, batch_idx):
         sensor_data = batch["sensor"]
@@ -649,38 +581,15 @@ class XelaForceSLModule(ForceSLModule):
                 self.target_max = self.target_max[-1]
         return self.step(batch, batch_idx)
 
-
-    # def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
-    #     x = batch["sensor"]
-    #     x = einops.rearrange(x, "b t n c -> b c t n")
-    #     y_gt = batch["force"]
-
-    #     if self.only_normal_force:
-    #         y_gt = y_gt[..., 2].unsqueeze(-1)
-
-    #     y_pred = self.forward(x)
-    #     loss = F.smooth_l1_loss(y_pred, y_gt)
-
-    #     mse_xyz = F.mse_loss(y_pred.detach(), y_gt.detach(), reduction="none").mean(dim=(0, 1))
-
-    #     if self.only_normal_force:
-    #         y_out = torch.zeros_like(batch["force"]).to(y_pred.device)
-    #         y_out[..., 2] = y_pred.squeeze(-1)
-    #         y_pred = y_out
-
-    #     return {
-    #         "loss": loss,
-    #         "rmse_xyz": torch.sqrt(mse_xyz).detach(),
-    #         "y_pred": y_pred,
-    #     }
-
-    # def forward(self, x: torch.Tensor):
-    #     z = self.model_encoder(x)
-    #     if self.train_encoder:
-    #         y_pred = self.model_task(z)
-    #     else:
-    #         y_pred = self.model_task(z.detach())
-    #     return y_pred
+    @torch.no_grad()
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
+        if self.target_mean is None or self.target_std is None or self.target_max is None:
+            self.target_mean = self.model_task.target_mean
+            self.target_std = self.model_task.target_std
+            self.target_max = self.model_task.target_max
+            if self.only_normal_force:
+                self.target_max = self.target_max[-1]
+        return self.step(batch, batch_idx)
 
     def on_train_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.train_pred.append(outputs["y_pred"])
@@ -692,13 +601,16 @@ class XelaForceSLModule(ForceSLModule):
         self.val_gt.append(batch["force"])
         self.log_metrics(outputs, trainer_instance.global_val_step, trainer_instance, "val")
 
-    def on_validation_epoch_end(self, trainer_instance=None):
-        return self.on_epoch_end(trainer_instance, stage="val")
+    def on_test_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
+        self.test_pred.append(outputs["y_pred"])
+        self.test_gt.append(batch["force"])
 
     def on_train_epoch_end(self, trainer_instance=None):
         return self.on_epoch_end(trainer_instance, stage="train")
 
-    # def on_validation_epoch_end(self, trainer_instance=None):
+    def on_validation_epoch_end(self, trainer_instance=None):
+        return self.on_epoch_end(trainer_instance, stage="val")
+
     def on_epoch_end(self, trainer_instance=None, stage="train"):
         target_gt = None
         target_pred = None
@@ -726,27 +638,23 @@ class XelaForceSLModule(ForceSLModule):
             rmse_x = 1000.0
             rmse_y = 1000.0
 
-        im_corr = plot_correlation(forces_gt, forces_pred)
-        img_err, img_cone = plot_forces_error(forces_gt, forces_pred)
+        # im_corr = plot_correlation(forces_gt, forces_pred)
+        # img_err, img_cone = plot_forces_error(forces_gt, forces_pred)
 
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
+        epoch = trainer_instance.current_epoch
 
         if trainer_instance is not None:
             for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_z], ["", "_x", "_y", "_z"])):
-                trainer_instance.wandb.log(
-                    {
-                        f"{stage}/rmse{axis}": rmse_val,
-                        f"global_{stage}_step": step,
-                    }
-                )
-            
-            trainer_instance.wandb.log(
-                {
-                    f"{stage}/correlation": trainer_instance.wandb.Image(im_corr),
-                    f"{stage}/error": trainer_instance.wandb.Image(img_err),
-                    f"{stage}/error_cone": trainer_instance.wandb.Image(img_cone),
-                }
-            )
+                trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, epoch)
+         
+            # trainer_instance.wandb.log(
+            #     {
+            #         f"{stage}/correlation": trainer_instance.wandb.Image(im_corr),
+            #         f"{stage}/error": trainer_instance.wandb.Image(img_err),
+            #         f"{stage}/error_cone": trainer_instance.wandb.Image(img_cone),
+            #     }
+            # )
         
         if stage == "train":
             self.train_pred = []
@@ -756,3 +664,25 @@ class XelaForceSLModule(ForceSLModule):
             self.val_gt = []
         else:
             raise ValueError(f"Stage {stage} not recognized")
+
+    def on_test_end(self, trainer_instance=None, stage="test"):
+
+        forces_gt = torch.cat(self.test_gt, dim=0).cpu().numpy()
+        forces_pred = torch.cat(self.test_pred, dim=0).cpu().numpy()
+
+        if self.only_normal_force:
+            forces_pred = np.repeat(forces_pred, 3, axis=1)
+            forces_pred[:,0:2] = 0.0
+            
+        rmse = np.sqrt(np.mean((forces_gt - forces_pred) ** 2))
+        rmse_x = np.sqrt(np.mean((forces_gt[:, 0] - forces_pred[:, 0]) ** 2))
+        rmse_y = np.sqrt(np.mean((forces_gt[:, 1] - forces_pred[:, 1]) ** 2))
+        rmse_z = np.sqrt(np.mean((forces_gt[:, 2] - forces_pred[:, 2]) ** 2))
+
+        if self.only_normal_force:
+            rmse_x = 1000.0
+            rmse_y = 1000.0
+
+        if trainer_instance is not None:
+            for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_z], ["", "_x", "_y", "_z"])):
+                trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, 0)

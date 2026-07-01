@@ -43,7 +43,7 @@ class SignalTransformer(nn.Module):
         head: Optional[nn.Module] = None,
         act_layer: Callable[..., nn.Module] = nn.GELU,
         norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-        pos_embed_fn: Literal["sinusoidal", "learned"] = "learned",
+        pos_embed_fn: Literal["sinusoidal", "learned", "given"] = "learned",
         init_values: Optional[float] = None,
         num_register_tokens: int = 0,
         drop_path_rate: float = 0.0,
@@ -341,8 +341,8 @@ class SignalJEPAPredictor(SignalDecoder):
         pos_embed = einops.repeat(pos_embed, "1 t n c -> b t n c", b=b)
 
         context_masked_pos_embed = self.apply_tubelet_masks(pos_embed, context_masks)
-
         x = x + context_masked_pos_embed
+
         x = einops.repeat(x, "(k b) t n c -> (p k b) t n c", p=len(masks), k=len(context_masks))
 
         # (p b) t n c <- b t n c * p masks

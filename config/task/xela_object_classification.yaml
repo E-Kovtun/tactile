@@ -1,11 +1,11 @@
 #@package _global_
 
-task_name: downstream_force
+task_name: downstream_object_classification_comparison
 ssl_model_size: tiny
 experiment_name: ${task_name}_${ssl_name}
 seed: 42
 
-run_name: transformer_${now:%Y.%m.%d}_${now:%H-%M}
+run_name: jepa_${now:%Y.%m.%d}_${now:%H-%M}
 
 hydra:
   job:
@@ -14,7 +14,7 @@ hydra:
     dir: ${paths.log_dir}/${experiment_name}/${run_name}_${hydra.job.id}
 
 trainer:
-  max_epochs: 51
+  max_epochs: 100
   validation_frequency: 1 
   sanity_validate: true
   save_checkpoint_dir: ${paths.output_dir}/checkpoints
@@ -28,7 +28,7 @@ trainer:
 
 
 task:
-  _target_: tactile_ssl.downstream_task.XelaForceSLModule
+  _target_: tactile_ssl.downstream_task.XelaObjectSLModule
   checkpoint_task: ~
 
   # model_encoder:
@@ -45,18 +45,7 @@ task:
   #   causal: False
   #   normalization:
 
-  # model_encoder:
-  #   _target_: tactile_ssl.model.XelaGAT
-  #   in_dim: 368 # total number of xela sensors in hand
-  #   in_chans: 6 # 3 xela mag channels + 3 position channels
-  #   embed_dim: 192
-  #   sequence_length: 10
-  #   time_chunk_size: 10
-  #   pos_embed_fn: learned
-  #   num_register_tokens: 1
-  #   with_masktoken: True
-  #   normalization: 
-
+  # JEPA
   model_encoder:
     _target_: tactile_ssl.model.xela_${ssl_model_size}
     in_dim: 368 
@@ -72,14 +61,10 @@ task:
     causal: False
 
   model_task:
-    _target_: tactile_ssl.downstream_task.XelaForceLinearProbe
-    time_chunk_size: ${task.model_encoder.time_chunk_size}
-    embed_dim: ${ssl_model_size}
-    num_heads: 12
-    depth: 1
-    with_last_activations: True
-    only_normal_force: False
-    pad_id: ~
+    _target_: tactile_ssl.probe.classification.LinearClassifier
+    input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    classes: ${data.object_classes}
+    class_weights: ${data.object_class_weights}
 
   checkpoint_encoder: ${checkpoint_encoder}
   train_encoder: false
@@ -87,7 +72,8 @@ task:
 
   optim_cfg:
     _partial_: True
-    _target_: torch.optim.Adam
-    lr: 0.0001
+    _target_: torch.optim.AdamW
+    lr: 1e-4
+    weight_decay: 0.05
 
   scheduler_cfg: ~

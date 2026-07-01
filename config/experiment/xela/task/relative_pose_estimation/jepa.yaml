@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_relative_pose
+  - override /task: xela_relative_pose
+  - _self_
+
+ssl_name: jepa
+sensor: xela
+ckpt_path: ~
+resume_id: ~
+train_data_budget: 1.0
+val_data_budget: 1.0
+
+task:
+  # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_transformer_encoder_jepa/2026.06.26_18-43/checkpoints/epoch-0500.ckpt
+  # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_transformer_encoder_jepa/2026.06.29_19-54/checkpoints/epoch-0500.ckpt
+  checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_transformer_encoder_jepa/2026.06.30_18-18/checkpoints/epoch-0400.ckpt

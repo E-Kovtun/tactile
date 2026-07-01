@@ -5,6 +5,8 @@ from .multimodal_transformer import (
 )
 from .signal_transformer import SignalTransformer
 from .xela_transformer import *  # noqa: F401
+from .xela_linear import XelaLinear
+from .xela_gat import XelaGAT
 
 
 VIT_EMBED_DIMS = {

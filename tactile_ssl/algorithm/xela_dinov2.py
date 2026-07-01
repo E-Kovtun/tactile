@@ -55,12 +55,12 @@ class XelaDINOv2Module(DINOv2Module):
                 X_pred = xela_sensor_layout(X_pred, xela_mean, xela_std)
                 X_orig = xela_sensor_layout(X_orig)
 
-                trainer_instance.wandb.log(
-                    {
-                        "val/pred_signal": trainer_instance.wandb.Video(X_pred, fps=5, format="gif"),
-                        "val/target_signal": trainer_instance.wandb.Video(X_orig, fps=5, format="gif"),
-                    }
-                )
+                # trainer_instance.wandb.log(
+                #     {
+                #         "val/pred_signal": trainer_instance.wandb.Video(X_pred, fps=5, format="gif"),
+                #         "val/target_signal": trainer_instance.wandb.Video(X_orig, fps=5, format="gif"),
+                #     }
+                # )
 
     def sample_masks(self, x):
         batch_size, _, num_sensors, _ = x.shape

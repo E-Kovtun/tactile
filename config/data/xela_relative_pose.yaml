@@ -5,8 +5,8 @@ max_train_data: 20000
 sensor: xela
 
 dataset:
-  _target_: tactile_ssl.data.xela_pose_estimation.RelativePoseDataset.create_from_files
-  data_path: ${paths.data_root}/xela/downstream_tasks/relative_pose_estimation
+  _target_: tactile_ssl.data.xela_pose_estimation.RelativePoseDataset.create_train_val_test_from_files
+  data_path: ${paths.data_root}/downstream_tasks/relative_pose_estimation
   urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
   baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
   config:
@@ -17,6 +17,7 @@ dataset:
     interpolating_freq: 100
     train_data_budget: 1.0
     val_data_budget: 1.0
+    val_ratio: 0.2
 
 train_dataloader:
   batch_size: 16
@@ -27,6 +28,14 @@ train_dataloader:
   shuffle: True
 
 val_dataloader:
+  batch_size: 16
+  num_workers: 1
+  drop_last: True
+  pin_memory: True
+  persistent_workers: True
+  shuffle: False
+
+test_dataloader:
   batch_size: 16
   num_workers: 1
   drop_last: True

@@ -1,6 +1,6 @@
 defaults:
   - paths: default
-  - wandb: wandb_config
+  - tensorboard: tensorboard_config
   - data: d360
   - task: d360_t1_force_estimation
   - override hydra/job_logging: colorlog
