@@ -1,6 +1,27 @@
 # Research on SSL methods for tactile data
 
-To install conda enironment for experiments, refer to `tactile_environment.yml`
+To set conda enironment for experiments, refer to `tactile_environment.yml`
+
+To launch DINOv2 **pre-training**, run 
+```
+python train.py +experiment=xela/dinov2.yaml
+```
+
+To launch force **downstream**, specify the checkpoint path in `config/experiment/xela/task/force/dinov2.yaml` and run
+```
+python train_task_force.py +experiment=xela/task/force/dinov2.yaml
+```
+
+For pose estimation:
+```
+python train_task_pose_estimation.py +experiment=xela/task/relative_pose_estimation/dinov2.yaml
+```
+
+For object classification:
+```
+python train_task_object.py +experiment=xela/task/object_classification/dinov2.yaml
+```
+
 
 # Multisensory Touch Representations for full hand dexterous manipulation
 
