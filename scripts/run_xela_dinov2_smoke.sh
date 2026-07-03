@@ -10,7 +10,7 @@ mkdir -p "${OUT}"
 
 python train.py +experiment=xela/dinov2 \
   ckpt_path="${PRETRAIN_CKPT_DIR}" \
-  trainer.max_epochs=1 trainer.validation_frequency=1 trainer.checkpoint_frequency=1 \
+  trainer.max_epochs=95 trainer.validation_frequency=1 trainer.checkpoint_frequency=1 \
   data.dataset_list.0.sequence_list='[corn]' data.dataset_list.0.train_dataset_ids='[0]' data.dataset_list.0.val_dataset_ids='[9]' \
   data.train_dataloader.batch_size=8 data.val_dataloader.batch_size=8 \
   paths.log_dir="${OUT}/pretrain" paths.tensorboard_dir="${OUT}/pretrain/tensorboard"

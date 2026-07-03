@@ -624,7 +624,18 @@ class Trainer:
         if state is None:
             state = {}
 
-        remainder = self.fabric.load(path, state)
+        original_torch_load = torch.load
+
+        def torch_load_with_full_checkpoint(*args, **kwargs):
+            kwargs.setdefault("weights_only", False)
+            return original_torch_load(*args, **kwargs)
+
+        torch.load = torch_load_with_full_checkpoint
+        try:
+            remainder = self.fabric.load(path, state)
+        finally:
+            torch.load = original_torch_load
+
         self.global_step = remainder.pop("global_step")
         self.current_epoch = remainder.pop("current_epoch")
 
