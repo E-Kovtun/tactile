@@ -3,8 +3,8 @@ encoder:
   _target_: tactile_ssl.model.xela_base
   in_dim: 368 # total number of xela sensors in hand
   in_chans: 3 # 3 xela mag channels + 3 position channels
-  sequence_length: 1
-  time_chunk_size: 1
+  sequence_length: ${int_multiply:${data.window_time},${data.interpolating_freq}}
+  time_chunk_size: ${algorithm.encoder.sequence_length}
   num_register_tokens: 1
   pos_embed_fn: learned
   with_masktoken: True
@@ -66,4 +66,3 @@ online_probes:
       _target_: torch.nn.CrossEntropyLoss
 
 online_probes_lrs: [1e-4]
-

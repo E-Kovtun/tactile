@@ -17,7 +17,7 @@ task:
   checkpoint_encoder: ${paths.encoder_checkpoint_root}/mae_xela_tiny.ckpt
   model_encoder:
     in_chans: 3
-    sequence_length: 1
-    time_chunk_size: 1
+    sequence_length: ${int_multiply:${data.dataset.config.window_time},${data.dataset.config.interpolating_freq}}
+    time_chunk_size: ${task.model_encoder.sequence_length}
     num_register_tokens: 1
     with_masktoken: True

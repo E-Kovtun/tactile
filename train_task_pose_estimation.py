@@ -27,6 +27,8 @@ from tactile_ssl.utils.combined_dataset import CombinedDataset
 
 logger = get_pylogger(__name__)
 
+OmegaConf.register_new_resolver("int_multiply", lambda a, b: int(a * b))
+
 
 def init_tensorboard(cfg: DictConfig):
     writer = SummaryWriter(log_dir=cfg.log_dir)
