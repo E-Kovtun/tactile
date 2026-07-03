@@ -2,21 +2,14 @@
 defaults:
   - override /paths: default
   - override /tensorboard: tensorboard_config
-  - override /data: xela_force
-  - override /task: xela_force_estimation
+  - override /data: xela_object
+  - override /task: xela_object_classification
   - _self_
 
-ssl_name: mae
 sensor: xela
+ssl_name: mae
 ckpt_path: ~
 resume_id: ~
-train_data_budget: 1.0
-val_data_budget: 1.0
-
-test:
-  data:
-    dataset_name: ['val/spherical_pad15', 'val/flat_pad15']
-    # dataset_name: ['train2/increment_force_1_5N']
 
 task:
   checkpoint_encoder: ${paths.encoder_checkpoint_root}/mae_xela_tiny.ckpt
@@ -26,7 +19,3 @@ task:
     time_chunk_size: 1
     num_register_tokens: 1
     with_masktoken: True
-
-  # model_task:
-  #   only_normal_force: True
-  #   pad_id: 15

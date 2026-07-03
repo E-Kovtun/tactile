@@ -14,11 +14,21 @@ resume_id: ~
 train_data_budget: 1.0
 val_data_budget: ${train_data_budget} 
 
+data:
+  dataset:
+    config:
+      features:
+        use_spatial_coords: true
+
 task:
   # checkpoint_encoder: ${paths.encoder_checkpoint_root}/xela_sparshskin_tiny.ckpt
   # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/dinov2_xela_tiny/2026.05.14-19-02/checkpoints/epoch-0500.ckpt
   # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_nopos_dinov2/2026.05.25_18-32/checkpoints/epoch-0500.ckpt
   checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_gat_encoder_dinov2/2026.06.19_18-35/checkpoints/epoch-0500.ckpt
+  model_encoder:
+    in_chans: 6
+    num_register_tokens: 1
+    with_masktoken: True
 
   model_task:
     pad_id: 15

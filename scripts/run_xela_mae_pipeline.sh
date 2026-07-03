@@ -26,7 +26,6 @@ python train_task_pose_estimation.py +experiment=xela/task/relative_pose_estimat
   task.checkpoint_encoder="${CKPT}" \
   paths.log_dir="${OUT}/pose_estimation" paths.tensorboard_dir="${OUT}/pose_estimation/tensorboard"
 
-python train_task_object.py +experiment=xela/task/object_classification/dinov2 \
-  ssl_name=mae paths=default tensorboard=tensorboard_config \
+python train_task_object.py +experiment=xela/task/object_classification/mae \
   task.checkpoint_encoder="${CKPT}" \
   paths.log_dir="${OUT}/object_classification" paths.tensorboard_dir="${OUT}/object_classification/tensorboard"

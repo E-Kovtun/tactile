@@ -25,5 +25,6 @@ python train_task_pose_estimation.py +experiment=xela/task/relative_pose_estimat
   paths.log_dir="${OUT}/pose_estimation" paths.tensorboard_dir="${OUT}/pose_estimation/tensorboard"
 
 python train_task_object.py +experiment=xela/task/object_classification/dinov2 \
+  data.dataset_list.0.dataset.config.features.use_spatial_coords=true \
   task.checkpoint_encoder="${CKPT}" \
   paths.log_dir="${OUT}/object_classification" paths.tensorboard_dir="${OUT}/object_classification/tensorboard"

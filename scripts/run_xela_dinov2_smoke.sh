@@ -33,6 +33,7 @@ python train_task_pose_estimation.py +experiment=xela/task/relative_pose_estimat
 python train_task_object.py +experiment=xela/task/object_classification/dinov2 \
   trainer.max_epochs=1 trainer.validation_frequency=1 \
   data.dataset_list.0.sequence_list='[corn]' data.dataset_list.0.train_dataset_ids='[0]' data.dataset_list.0.val_dataset_ids='[8]' data.dataset_list.0.test_dataset_ids='[9]' \
+  data.dataset_list.0.dataset.config.features.use_spatial_coords=true \
   data.train_dataloader.batch_size=8 data.val_dataloader.batch_size=8 data.test_dataloader.batch_size=8 \
   task.checkpoint_encoder="${CKPT}" \
   paths.log_dir="${OUT}/object_classification" paths.tensorboard_dir="${OUT}/object_classification/tensorboard"

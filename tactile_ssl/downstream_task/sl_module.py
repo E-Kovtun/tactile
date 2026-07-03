@@ -86,7 +86,7 @@ class SLModule(Module, nn.Module):
         target_keys = [key for key in checkpoint["model"].keys() if encoder_key in key]
         # remove the prefix from the keys
         new_keys = [key.replace(f"{encoder_key}.", "") for key in target_keys]
-        # create a state_dict  with keys target_keys from the checkpoint
+        # create a state_dict with keys target_keys from the checkpoint
         new_state_dict = {
             new_key: checkpoint["model"][target_key] for new_key, target_key in zip(new_keys, target_keys)
         }

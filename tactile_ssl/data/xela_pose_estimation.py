@@ -41,6 +41,10 @@ class RelativePoseDataset(data.Dataset):
             config.subtract_baseline = False
         if config.get("normalize") is None:
             config.normalize = False
+        if config.get("features") is None:
+            config.features = {}
+        if config.features.get("use_spatial_coords") is None:
+            config.features.use_spatial_coords = False
 
         self.datapath_list = data_list
         self.window_time = config.window_time
@@ -49,6 +53,7 @@ class RelativePoseDataset(data.Dataset):
         self.pose_nominal_freq = self.nominal_freq // 10
         self.baseline_signal_path = baseline_signal_path
         self.subtract_baseline = config.subtract_baseline
+        self.use_spatial_coords = bool(config.features.use_spatial_coords)
         self.num_xela_taxels = len(XELA_FLATTEN_ORDER.keys())
         self.max_sensors_per_taxel = 30
         self.num_frames_per_window = int(round(self.window_time * self.nominal_freq))
@@ -164,8 +169,9 @@ class RelativePoseDataset(data.Dataset):
             baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=xela_array.shape[0])
             xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
 
-        # xela_array = np.concatenate([xela_array[..., 1:], sensor_positions], axis=-1)
         xela_array = xela_array[..., 1:]
+        if self.use_spatial_coords:
+            xela_array = np.concatenate([xela_array, sensor_positions], axis=-1)
 
         base_T_object = read_pose_data(base_T_object, pose_timestamps, self.pose_nominal_freq)
         base_T_object = base_T_object[..., 1:]  # Strip the timestamps

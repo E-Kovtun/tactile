@@ -13,7 +13,17 @@ resume_id: ~
 train_data_budget: 1.0
 val_data_budget: 1.0
 
+data:
+  dataset:
+    config:
+      features:
+        use_spatial_coords: true
+
 task:
   # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_dinov2/2026.05.14-19-02/checkpoints/epoch-0500.ckpt
   # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_nopos_dinov2/2026.05.25_18-32/checkpoints/epoch-0500.ckpt
   checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_nopos_linear_encoder_dinov2/2026.05.27_17-41/checkpoints/epoch-0500.ckpt
+  model_encoder:
+    in_chans: 6
+    num_register_tokens: 1
+    with_masktoken: True
