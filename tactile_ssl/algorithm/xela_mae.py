@@ -39,6 +39,9 @@ class XelaMAEModule(MAEModule):
                 for k, v in outputs_probe.items():
                     trainer_instance.writer.add_scalar(f"{stage}/{k}", v, step)
 
+    def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
+        self.log_on_batch_end(outputs, stage="train", trainer_instance=trainer_instance)
+
     def on_validation_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.log_on_batch_end(outputs, stage="val", trainer_instance=trainer_instance)
         # Plot online probe predictions

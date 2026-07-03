@@ -198,6 +198,8 @@ class MAEModule(Module, nn.Module):
     ):
         if step is not None:
             if trainer_instance is not None:
+                if not hasattr(trainer_instance, "wandb"):
+                    return
                 if trainer_instance.should_log:
                     trainer_instance.wandb.log(
                         {
