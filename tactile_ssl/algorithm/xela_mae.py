@@ -31,13 +31,13 @@ class XelaMAEModule(MAEModule):
         ssl_loss = outputs["ssl_loss"]
         if trainer_instance is not None and trainer_instance.should_log:
             step = trainer_instance.step
-            trainer_instance.wandb.log({f"{stage}/loss": loss, f"global_{stage}_step": step})
-            trainer_instance.wandb.log({f"{stage}/ssl_loss": ssl_loss, f"global_{stage}_step": step})
+            trainer_instance.writer.add_scalar(f"{stage}/loss", loss, step)
+            trainer_instance.writer.add_scalar(f"{stage}/ssl_loss", ssl_loss, step)
 
             for probe in self.online_probes:
                 outputs_probe = {k: v for k, v in outputs.items() if k.startswith(probe.probe_name)}
                 for k, v in outputs_probe.items():
-                    trainer_instance.wandb.log({f"{stage}/{k}": v, f"global_{stage}_step": step})
+                    trainer_instance.writer.add_scalar(f"{stage}/{k}", v, step)
 
     def on_validation_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.log_on_batch_end(outputs, stage="val", trainer_instance=trainer_instance)
@@ -68,12 +68,8 @@ class XelaMAEModule(MAEModule):
                 X_pred = xela_sensor_layout(X_pred, xela_mean, xela_std)
                 X_orig = xela_sensor_layout(X_orig)
 
-                trainer_instance.wandb.log(
-                    {
-                        "val/pred_signal": trainer_instance.wandb.Video(X_pred, fps=5),
-                        "val/target_signal": trainer_instance.wandb.Video(X_orig, fps=5),
-                    }
-                )
+                trainer_instance.writer.add_video("val/pred_signal", torch.from_numpy(X_pred).unsqueeze(0), step, fps=5)
+                trainer_instance.writer.add_video("val/target_signal", torch.from_numpy(X_orig).unsqueeze(0), step, fps=5)
 
     def sample_masks(self, x):
         batch_size, _, num_sensors, _ = x.shape

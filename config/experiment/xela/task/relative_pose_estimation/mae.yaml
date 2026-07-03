@@ -1,9 +1,9 @@
 # @package _global_
 defaults:
-  - /paths: ~
-  - /wandb: ~
-  - /data: xela_relative_pose
-  - /task: xela_relative_pose
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_relative_pose
+  - override /task: xela_relative_pose
   - _self_
 
 ssl_name: mae

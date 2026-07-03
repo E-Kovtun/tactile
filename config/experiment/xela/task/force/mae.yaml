@@ -1,9 +1,9 @@
 # @package _global_
 defaults:
-  - /paths: ~
-  - /wandb: ~
-  - /data: xela_force
-  - /task: xela_force_estimation
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_force
+  - override /task: xela_force_estimation
   - _self_
 
 ssl_name: mae

@@ -232,7 +232,7 @@ class BYOLModule(Module, nn.Module):
     def log_on_batch_end(self, outputs, stage: Literal["train", "val"] = "train", trainer_instance=None):
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
         for key, value in outputs.items():
-            trainer_instance.wandb.log({f"{stage}/{key}": value, f"global_{stage}_step": step})
+            trainer_instance.writer.add_scalar(f"{stage}/{key}", value, step)
 
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
@@ -242,12 +242,7 @@ class BYOLModule(Module, nn.Module):
             )
             with torch.no_grad():
                 update_moving_average(self.target_encoder, self.online_encoder, moving_average_decay)
-        trainer_instance.wandb.log(
-            {
-                "train/moving_average_decay": moving_average_decay,
-                "global_train_step": trainer_instance.global_step,
-            }
-        )
+        trainer_instance.writer.add_scalar("train/moving_average_decay", moving_average_decay, trainer_instance.global_step)
         self.log_on_batch_end(outputs, stage="train", trainer_instance=trainer_instance)
 
     def on_validation_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
@@ -407,4 +402,3 @@ class BYOLModule(Module, nn.Module):
             {"scheduler": lr_scheduler, "interval": "step", "monitor": None},
             {"wd_scheduler": wd_scheduler, "interval": "step", "frequency": 1},
         )
-

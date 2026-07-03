@@ -1,21 +1,30 @@
 # @package _global_
 defaults:
-  - override /paths: ~
-  - override /wandb: ~
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
   - override /data: byol
   - override /algorithm: xela_byol
   - _self_
 
 model_size: tiny
-experiment_name: byol_xela_${model_size}
 ckpt_path: ~
 
-wandb:
-  project: xela_byol
-  group: byol_xela${model_size}
-  tags: ["xela${model_size}"]
+task_name: pretrain_byol_encoder
+ssl_name: byol
+ssl_model_size: tiny
+experiment_name: ${task_name}_${ssl_name}
+seed: 42
+
+hydra:
+  job:
+    id: ${now:%Y.%m.%d}_${now:%H-%M}
+  run:
+    dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}
+
+run_name: ${now:%Y.%m.%d}_${now:%H-%M}
 
 trainer:
   max_epochs: 500
   validation_frequency: 5
   checkpoint_frequency: 20
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
