@@ -1,23 +1,16 @@
 from typing import Optional, List
-import pickle
 from pathlib import Path
 
 import cv2
-import einops
 import numpy as np
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from omegaconf import DictConfig
-import pytorch_kinematics as pk
-from scipy.spatial.transform import Rotation as R
 
+from tactile_ssl.data.cache import ArtifactCache
+from tactile_ssl.data.xela.preprocessing import load_cached_xela_sequence
 from tactile_ssl.data.xela.utils import (
-    read_xela_data,
-    read_allegro_joint_data,
-    compute_interp_timestamps,
-    load_data_dict,
-    pad_xela_sample,
     XELA_FLATTEN_ORDER,
 )
 from tactile_ssl.utils.logging import get_pylogger
@@ -50,6 +43,20 @@ class XelaSSLDataset(data.Dataset):
             config.bias_noise_std = 0.0
         if config.get("bias_range") is None:
             config.bias_range = 0.0
+        if config.get("features") is None:
+            config.features = {}
+        if config.features.get("use_spatial_coords") is None:
+            config.features.use_spatial_coords = False
+        if config.get("cache") is None:
+            config.cache = {}
+        if config.cache.get("enabled") is None:
+            config.cache.enabled = False
+        if config.cache.get("root") is None:
+            config.cache.root = ".cache/xela_artifacts"
+        if config.cache.get("force_recompute") is None:
+            config.cache.force_recompute = False
+        if config.cache.get("log_hits") is None:
+            config.cache.log_hits = True
         if baseline_signal_path is None:
             config.subtract_baseline = False
 
@@ -68,50 +75,38 @@ class XelaSSLDataset(data.Dataset):
         self.bias_range = config.bias_range
         self.augment = False if self.bias_noise_std == 0.0 and self.bias_range == 0.0 else True
         self.object_label = object_class
+        self.use_spatial_coords = bool(config.features.use_spatial_coords)
 
         self.num_xela_taxels = len(XELA_FLATTEN_ORDER.keys())
         self.max_sensors_per_taxel = 30
 
         assert Path(xela_urdf_path).exists(), f"{xela_urdf_path} does not exist"
-        self.xela_kinematic_chain = pk.build_chain_from_urdf(open(xela_urdf_path).read())
 
         self.data_path = data_path
-        xela_dict, allegro_dict = load_data_dict(self.data_path)
         self.baseline_signal_path = baseline_signal_path
-        if self.baseline_signal_path is not None:
-            with open(self.baseline_signal_path, "rb") as f:
-                baseline_signal = np.asarray(pickle.load(f))
-            self.xela_baseline = np.mean(baseline_signal[:, :, 1:], axis=0)
         self.xela_mean, self.xela_std = None, None
 
-        xela_array = np.array(xela_dict, copy=True)
-
-        allegro_array = None
-        if allegro_dict is not None:
-            allegro_array = np.array(allegro_dict["joint_states"], copy=True)
-            self.timestamps, self.num_frames = compute_interp_timestamps(
-                [xela_array[:, 0, 0], allegro_array[:, 0]], self.interpolating_freq
-            )
-        else:
-            self.timestamps, self.num_frames = compute_interp_timestamps([xela_array[:, 0, 0]], self.interpolating_freq)
-
-        self.xela_array = read_xela_data(
-            xela_array,
-            self.timestamps,
-            self.interpolating_freq,
-            self.smooth_data,
+        self.cache = ArtifactCache(
+            root=config.cache.root,
+            enabled=bool(config.cache.enabled),
+            force_recompute=bool(config.cache.force_recompute),
+            log_hits=bool(config.cache.log_hits),
         )
-        if allegro_array is not None:
-            self.joint_angles, self.joint_effort = read_allegro_joint_data(
-                allegro_array,
-                self.timestamps,
-                self.interpolating_freq,
-                self.smooth_data,
-            )
-        else:
-            self.joint_angles = np.zeros([xela_array.shape[0], 16])
-            self.joint_effort = np.zeros([xela_array.shape[0], 16])
-        self.joint_poses = self.joint_angles_to_poses()
+        cached = load_cached_xela_sequence(
+            cache=self.cache,
+            config=config,
+            data_path=self.data_path,
+            xela_urdf_path=xela_urdf_path,
+            baseline_signal_path=self.baseline_signal_path,
+        )
+        self.timestamps = cached["timestamps"]
+        self.num_frames = len(self.timestamps)
+        self.xela_array = cached["xela_array"]
+        self.joint_angles = cached["joint_angles"]
+        self.joint_effort = cached["joint_effort"]
+        self.joint_poses = cached["joint_poses"]
+        self.sensor_positions = cached["sensor_positions"]
+        self.artifact_keys = cached["artifact_keys"]
 
         if VIS_POSES:
             import matplotlib.pyplot as plt
@@ -120,9 +115,7 @@ class XelaSSLDataset(data.Dataset):
             sensor_pose = self.read_joint_pose_sample(0)
 
             ax = plt.subplot(111, projection="3d")
-            transform = np.eye(4)
-            transform = einops.repeat(transform, " i j -> b i j", b=368)
-            transform[:, :3, :3] = R.from_quat(sensor_pose[0, :, 3:]).as_matrix()
+            transform = np.repeat(np.eye(4)[None], 368, axis=0)
             transform[:, :3, 3] = sensor_pose[0, :, :3]
             draw_3d_axes(ax, transform, axis_length=0.005)
             # Get rid of colored axes planes
@@ -147,16 +140,6 @@ class XelaSSLDataset(data.Dataset):
 
         self.data_idxs = np.arange(0, max_length, self.shift_per_window)
 
-        # Remove outliers
-        self.xela_array[..., 1:] = np.where(self.xela_array[..., 1:] < 20000, 0, self.xela_array[..., 1:])
-        self.xela_array[..., 1:] = np.where(self.xela_array[..., 1:] > 60000, 0, self.xela_array[..., 1:])
-
-        # NOTE: There were some bad sensors during pilot pretraining data collection (Sensor IDX: 104, 145)
-        mask = self.xela_array[:, ..., 1] != 0
-        if self.subtract_baseline and self.xela_baseline is not None:
-            baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=self.xela_array.shape[0])
-            self.xela_array[mask, 1:] = self.xela_array[mask, 1:] - baseline[mask, :]
-
         if self.load_images:
             self.color_image_path = Path(self.data_path + "/top_camera/color")
             self.depth_image_path = Path(self.data_path + "/top_camera/depth")
@@ -177,21 +160,7 @@ class XelaSSLDataset(data.Dataset):
         return len(self.data_idxs)
 
     def joint_angles_to_poses(self):
-        joint_angles_torch = torch.from_numpy(self.joint_angles.astype(np.float32))
-        joint_poses = self.xela_kinematic_chain.forward_kinematics(joint_angles_torch)
-
-        poses = []
-        for k in XELA_FLATTEN_ORDER.keys():
-            v = joint_poses[k]
-            transform_matrix = v.get_matrix()
-            rotation = np.asarray(transform_matrix[:, :3, :3])
-            translation = np.asarray(transform_matrix[:, :3, 3])
-            r = R.from_matrix(rotation)
-            r = r.as_quat(canonical=True)
-            transform = np.concatenate([translation, r], axis=-1)
-            poses.append(transform)
-        poses = np.array(poses)
-        return poses
+        return self.joint_poses
 
     def read_images(self, index):
         color_images = []
@@ -212,59 +181,7 @@ class XelaSSLDataset(data.Dataset):
         return joint_angles, joint_effort
 
     def read_joint_pose_sample(self, index):
-        joint_poses = self.joint_poses[:, index : index + self.num_frames_per_window]
-        joint_poses = np.transpose(joint_poses, (1, 0, 2))
-        joint_sensor_poses = []
-        for i, (k, v) in enumerate(XELA_FLATTEN_ORDER.items()):
-            joint_sensor_pose = einops.repeat(joint_poses[:, i : i + 1, :], "t 1 c -> t s c", s=v)
-            sensor_positions = None
-            if "aftc" in k:
-                h, w, d = 0.031, 0.039, 0.029  # numbers taken from mesh boundingbox
-                h_res, w_res = 6, 6
-                x = np.linspace(0.5 - h_res / 2, h_res / 2 + 0.5, h_res, endpoint=False) * h / h_res
-                y = np.linspace(0.5, w_res + 0.5, w_res, endpoint=False) * w / w_res
-                xx, yy = np.meshgrid(x, y)
-                xx_ = np.concatenate([xx[:4, :].flatten(), xx[-2, 1:-1], xx[-1, 2:-2]], axis=0)
-                yy_ = np.concatenate([yy[:4, :].flatten(), yy[-2, 1:-1], yy[-1, 2:-2]], axis=0)
-                sensor_positions = np.stack([xx_.flatten(), yy_.flatten()], axis=-1)
-                sensor_positions = np.concatenate([sensor_positions, np.zeros_like(sensor_positions)], axis=-1)
-                sensor_positions[..., -2] = d
-                sensor_positions[..., -1] = 1
-            elif "4x4" in k:
-                h, w, d = 0.026, 0.024, 0.0044  # numbers taken from mesh boundingbox
-                h_res, w_res = 4, 4
-                x = np.linspace(0.5, h_res + 0.5, h_res, endpoint=False) * h / h_res
-                y = np.linspace(0.5, w_res + 0.5, w_res, endpoint=False) * w / w_res
-                xx, yy = np.meshgrid(x, y)
-                sensor_positions = np.stack([xx.flatten(), yy.flatten()], axis=-1)
-                sensor_positions = np.concatenate([sensor_positions, np.zeros_like(sensor_positions)], axis=-1)
-                sensor_positions[..., -2] = d
-                sensor_positions[..., -1] = 1
-
-            elif "4x6" in k:
-                h, w = 0.052, 0.032  # numbers taken from mesh boundingbox
-                h_res, w_res = 6, 4
-                x = np.linspace(0.5, h_res + 0.5, h_res, endpoint=False) * h / h_res
-                y = np.linspace(0.5, w_res + 0.5, w_res, endpoint=False) * w / w_res
-                xx, yy = np.meshgrid(x, y)
-                sensor_positions = np.stack([xx.flatten(), yy.flatten()], axis=-1)
-                sensor_positions = np.concatenate([sensor_positions, np.zeros_like(sensor_positions)], axis=-1)
-                sensor_positions[..., -1] = 1
-
-            joint_sensor_transform = np.eye(4)
-            joint_sensor_transform = einops.repeat(
-                joint_sensor_transform, "i j -> (t s) i j", t=self.num_frames_per_window, s=v
-            )
-            sensor_pose = einops.rearrange(joint_sensor_pose, "t s c -> (t s) c")
-            sensor_positions = einops.repeat(sensor_positions, "s c -> (t s) c", t=self.num_frames_per_window)
-            joint_sensor_transform[..., :3, 3] = sensor_pose[..., :3]
-            joint_sensor_transform[..., :3, :3] = R.from_quat(sensor_pose[..., 3:]).as_matrix()
-            sensor_pose = np.einsum("m i j, m j -> m i", joint_sensor_transform, sensor_positions)
-
-            joint_sensor_pose[..., :3] = sensor_pose[..., :3].reshape(self.num_frames_per_window, -1, 3)
-            joint_sensor_poses.append(joint_sensor_pose)
-        joint_poses = np.concatenate(joint_sensor_poses, axis=1)
-        return joint_poses
+        return self.sensor_positions[index : index + self.num_frames_per_window]
 
     def update_normalization(self, xela_mean, xela_std):
         self.xela_mean = xela_mean
@@ -276,7 +193,6 @@ class XelaSSLDataset(data.Dataset):
         timestamp = self.timestamps[index : index + self.num_frames_per_window]
 
         sensor_data = self.xela_array[index : index + self.num_frames_per_window]
-        sensor_data = sensor_data[..., 1:]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
         # sensor_data = pad_xela_sample(sensor_data, self.num_xela_taxels, self.max_sensors_per_taxel)
         joint_angles, _ = self.read_joint_sample(index)
@@ -294,7 +210,8 @@ class XelaSSLDataset(data.Dataset):
         sensor_data = torch.from_numpy(sensor_data).float()
         joint_angles = torch.from_numpy(joint_angles).float()
         sensor_poses = torch.from_numpy(joint_poses).float()
-        # sensor_data = torch.cat([sensor_data, sensor_poses[..., :3]], dim=-1)
+        if self.use_spatial_coords:
+            sensor_data = torch.cat([sensor_data, sensor_poses[..., :3]], dim=-1)
         sample_dict.update({"sensor": sensor_data})
         sample_dict.update({"joint_angles": joint_angles})
         sample_dict.update({"sensor_poses": sensor_poses})
@@ -306,6 +223,7 @@ class XelaSSLDataset(data.Dataset):
 if __name__ == "__main__":
     import os
     import hydra
+    import einops
     from omegaconf import OmegaConf, DictConfig
     from tactile_ssl.data.xela.utils import compute_xela_normalization
 
@@ -356,7 +274,6 @@ if __name__ == "__main__":
     train_dsets, val_dsets = get_xela_datasets(config.data)
     xela_train_array = []
     xela_val_array = []
-    baseline_signal = train_dsets[0].xela_baseline
     xela_mean, xela_std = compute_xela_normalization(train_dsets)
     val_xela_mean, val_xela_std = compute_xela_normalization(val_dsets)
     print(f"xela_mean: {xela_mean}, xela_std: {xela_std}")
@@ -365,7 +282,7 @@ if __name__ == "__main__":
     for dset in train_dsets:
         xela_train_array.append(dset.xela_array)
     xela_train_array = np.concatenate(xela_train_array, axis=0)
-    xela_array = einops.rearrange(xela_train_array, "b k c -> (b k) c")[..., 1:]
+    xela_array = einops.rearrange(xela_train_array, "b k c -> (b k) c")
     # xela_array = np.where(xela_array == 0, np.nan, xela_array)
 
     import matplotlib.pyplot as plt

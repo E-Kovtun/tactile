@@ -20,6 +20,22 @@ normalization:
 object_classes: null
 object_class_weights: null
 
+cache:
+  enabled: true
+  root: ${paths.work_dir}/.cache/xela_artifacts
+  force_recompute: false
+  fingerprint_mode: stats
+  log_hits: true
+
+preprocessing:
+  outlier_min: 20000
+  outlier_max: 60000
+  timestamp_policy: overlap_minmax_v1
+  baseline_policy: mean_over_all_baseline_frames_v1
+
+features:
+  use_spatial_coords: false
+
 window_time: 0.1 # 0.01
 window_overlap: 0.0
 interpolating_freq: 100
@@ -55,6 +71,9 @@ dataset_list:
         smooth_data: False
         bias_noise_std: 0
         bias_range: 0
+        cache: ${data.cache}
+        preprocessing: ${data.preprocessing}
+        features: ${data.features}
       data_path: ${paths.data_root}/xela/pretraining/extracted
       baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
       xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf

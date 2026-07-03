@@ -23,6 +23,9 @@ hydra:
 
 run_name: ${now:%Y.%m.%d}_${now:%H-%M}
 
+data:
+  features:
+    use_spatial_coords: true
 
 trainer:
   max_epochs: 500

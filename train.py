@@ -100,9 +100,9 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
         object_class_weights = object_class_weights / np.sum(object_class_weights)
         print(f"Object class weights: {object_class_weights}")
 
-        from tactile_ssl.data.xela.utils import compute_xela_normalization
+        from tactile_ssl.data.xela.preprocessing import compute_cached_xela_normalization
 
-        xela_mean, xela_std = compute_xela_normalization(train_datasets)
+        xela_mean, xela_std = compute_cached_xela_normalization(train_datasets)
         logger.info(f"Compute Xela normalization: mean={xela_mean}, std={xela_std}")
 
         with open_dict(cfg):
