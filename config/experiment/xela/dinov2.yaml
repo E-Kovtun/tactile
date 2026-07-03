@@ -9,7 +9,7 @@ defaults:
 model_size: tiny
 ckpt_path: ~
 
-task_name: pretrain_gat_encoder # pretrain_nopos_linear_encoder
+task_name: pretrain_dinov2_encoder # pretrain_nopos_linear_encoder
 ssl_name: dinov2
 ssl_model_size: tiny
 experiment_name: ${task_name}_${ssl_name}
@@ -32,7 +32,7 @@ trainer:
   validation_frequency: 5
   save_checkpoint_dir: ${paths.output_dir}/checkpoints
 
-# algorithm:
-#   centering: centering
-#   encoder:
-#     _target_: tactile_ssl.model.xela_${model_size}
+algorithm:
+  centering: centering
+  encoder:
+    _target_: tactile_ssl.model.xela_${model_size}
