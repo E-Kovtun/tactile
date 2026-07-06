@@ -60,6 +60,13 @@ def _set_equal_3d_limits(ax, points: np.ndarray) -> None:
     ax.set_zlim(center[2] - radius, center[2] + radius)
 
 
+def _expand_points_from_center(points: np.ndarray, scale: float) -> np.ndarray:
+    if scale == 1.0:
+        return points
+    center = points.mean(axis=0, keepdims=True)
+    return center + (points - center) * float(scale)
+
+
 def _highlight_sensor_ids(highlight_sensor_ids: Optional[Iterable[int]]) -> list[int]:
     if highlight_sensor_ids is None:
         return []
@@ -192,6 +199,7 @@ def plot_sensor_positions(
     show_legend: bool = True,
     figsize: Optional[Sequence[float]] = None,
     point_size: float = 18.0,
+    sensor_id_position_scale: float = 1.0,
 ):
     """Plot 3D Xela sensor positions for one or more time frames.
 
@@ -207,6 +215,7 @@ def plot_sensor_positions(
         show_legend: Add a legend to the first subplot.
         figsize: Optional figure size.
         point_size: Scatter marker size.
+        sensor_id_position_scale: Scale sensor id text positions away from each frame center.
 
     Returns:
         matplotlib.figure.Figure
@@ -223,6 +232,12 @@ def plot_sensor_positions(
 
     fig = plt.figure(figsize=figsize)
     all_points = positions[selected_frames].reshape(-1, 3)
+    if show_sensor_ids and sensor_id_position_scale != 1.0:
+        all_text_points = [
+            _expand_points_from_center(positions[frame_idx], sensor_id_position_scale)
+            for frame_idx in selected_frames
+        ]
+        all_points = np.concatenate([all_points, np.concatenate(all_text_points, axis=0)], axis=0)
     hand_parts = list(dict.fromkeys(sensor_to_part.values()))
 
     for subplot_id, frame_idx in enumerate(selected_frames, start=1):
@@ -256,7 +271,8 @@ def plot_sensor_positions(
             )
 
         if show_sensor_ids:
-            for sensor_id, point in enumerate(frame_points):
+            text_points = _expand_points_from_center(frame_points, sensor_id_position_scale)
+            for sensor_id, point in enumerate(text_points):
                 ax.text(point[0], point[1], point[2], str(sensor_id), fontsize=6)
 
         ax.set_title(f"frame {frame_idx}")
@@ -268,6 +284,75 @@ def plot_sensor_positions(
 
         if show_legend and show_points and subplot_id == 1:
             ax.legend(loc="upper left", bbox_to_anchor=(0.0, 1.0))
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_sensor_positions_2d(
+    sensor_positions,
+    frame_indices: Optional[Iterable[int]] = None,
+    sensor_to_part: Mapping[int, str] = SENSOR_TO_HAND_PART,
+    labels: Mapping[str, str] = HAND_PART_LABELS_RU,
+    colors: Mapping[str, str] = HAND_PART_COLORS,
+    show_sensor_ids: bool = False,
+    show_points: bool = True,
+    show_legend: bool = True,
+    figsize: Optional[Sequence[float]] = None,
+    point_size: float = 18.0,
+    sensor_id_position_scale: float = 1.0,
+):
+    """Plot Xela sensor positions in a 2D PCA projection."""
+    positions = _to_numpy(sensor_positions)
+    selected_frames = _normalize_frame_indices(frame_indices, positions.shape[0])
+
+    if set(sensor_to_part.keys()) != set(range(368)):
+        raise ValueError("sensor_to_part must contain exactly sensor ids 0..367")
+
+    if figsize is None:
+        figsize = (5.0 * len(selected_frames), 5.0)
+
+    fig, axes = plt.subplots(1, len(selected_frames), figsize=figsize, squeeze=False)
+    hand_parts = list(dict.fromkeys(sensor_to_part.values()))
+
+    for ax, frame_idx in zip(axes[0], selected_frames):
+        frame_points = positions[frame_idx]
+        points_2d = _project_positions_2d(frame_points)
+
+        if show_sensor_ids and sensor_id_position_scale != 1.0:
+            text_points_2d = _expand_points_from_center(points_2d, sensor_id_position_scale)
+            all_points_2d = np.concatenate([points_2d, text_points_2d], axis=0)
+        else:
+            text_points_2d = points_2d
+            all_points_2d = points_2d
+
+        for hand_part in hand_parts:
+            sensor_ids = [sensor_id for sensor_id, part in sensor_to_part.items() if part == hand_part]
+            pts = points_2d[sensor_ids]
+            if show_points:
+                ax.scatter(
+                    pts[:, 0],
+                    pts[:, 1],
+                    s=point_size,
+                    color=colors.get(hand_part, "tab:gray"),
+                    label=labels.get(hand_part, hand_part),
+                    alpha=0.9,
+                )
+
+        if show_sensor_ids:
+            for sensor_id, point in enumerate(text_points_2d):
+                ax.text(point[0], point[1], str(sensor_id), fontsize=6, ha="center", va="center")
+
+        ax.set_title(f"frame {frame_idx}: PCA")
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(all_points_2d[:, 0].min(), all_points_2d[:, 0].max())
+        ax.set_ylim(all_points_2d[:, 1].min(), all_points_2d[:, 1].max())
+        ax.margins(0.05)
+
+        if show_legend and show_points and frame_idx == selected_frames[0]:
+            ax.legend(loc="best")
 
     fig.tight_layout()
     return fig
