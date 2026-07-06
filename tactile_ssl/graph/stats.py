@@ -38,10 +38,12 @@ def sensor_graph_stats(graph: WeightedSensorGraph) -> Dict[str, float]:
     components = _connected_components(graph.num_nodes, graph.edge_index)
     component_sizes = [len(component) for component in components]
     edge_weight = graph.edge_weight
+    avg_degree = float(degrees.mean())
     return {
         "num_nodes": int(graph.num_nodes),
         "num_edges": int(graph.edge_index.shape[1]),
-        "avg_degree": float(degrees.mean()),
+        "avg_degree": avg_degree,
+        "mean_degree": avg_degree,
         "min_degree": int(degrees.min()),
         "max_degree": int(degrees.max()),
         "num_components": int(len(components)),
