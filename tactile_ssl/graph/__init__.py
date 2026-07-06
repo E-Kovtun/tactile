@@ -1,4 +1,5 @@
 from tactile_ssl.graph.builders import (
+    build_custom_graph,
     build_distance_threshold_graph,
     build_knn_graph,
     build_physical_graph,
@@ -23,6 +24,7 @@ __all__ = [
     "PHYSICAL_BRIDGE_LINK_PAIRS",
     "SENSOR_TO_HAND_PART",
     "WeightedSensorGraph",
+    "build_custom_graph",
     "build_distance_threshold_graph",
     "build_knn_graph",
     "build_physical_graph",

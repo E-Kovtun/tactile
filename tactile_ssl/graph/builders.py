@@ -31,6 +31,21 @@ def _sensor_ranges_by_link() -> Dict[str, SensorRange]:
     return {sensor_range.link_name: sensor_range for sensor_range in iter_sensor_ranges()}
 
 
+def _sensor_link_ids() -> np.ndarray:
+    link_ids = np.empty(368, dtype=object)
+    for sensor_range in iter_sensor_ranges():
+        link_ids[list(sensor_range.sensor_ids)] = sensor_range.link_name
+    return link_ids
+
+
+def _physical_neighbor_links() -> Dict[str, set[str]]:
+    neighbors = {sensor_range.link_name: set() for sensor_range in iter_sensor_ranges()}
+    for left_link, right_link in PHYSICAL_BRIDGE_LINK_PAIRS:
+        neighbors[left_link].add(right_link)
+        neighbors[right_link].add(left_link)
+    return neighbors
+
+
 def _add_edge(edge_pairs: set[tuple[int, int]], left: int, right: int) -> None:
     if left == right:
         return
@@ -67,6 +82,29 @@ def _local_grid_edges(link_name: str, start: int) -> set[tuple[int, int]]:
     return edges
 
 
+def _dense_pad_edges(sensor_range: SensorRange) -> set[tuple[int, int]]:
+    sensor_ids = list(sensor_range.sensor_ids)
+    return {
+        (sensor_ids[i], sensor_ids[j])
+        for i in range(len(sensor_ids))
+        for j in range(i + 1, len(sensor_ids))
+    }
+
+
+def _pad_edges(link_pads: Literal["none", "sparse", "dense"]) -> set[tuple[int, int]]:
+    edge_pairs: set[tuple[int, int]] = set()
+    for sensor_range in iter_sensor_ranges():
+        if link_pads == "none":
+            continue
+        if link_pads == "sparse":
+            edge_pairs.update(_local_grid_edges(sensor_range.link_name, sensor_range.start))
+        elif link_pads == "dense":
+            edge_pairs.update(_dense_pad_edges(sensor_range))
+        else:
+            raise ValueError(f"Unsupported link_pads={link_pads!r}")
+    return edge_pairs
+
+
 def _nearest_cross_link_edges(
     positions: np.ndarray,
     left_ids: Sequence[int],
@@ -89,6 +127,64 @@ def _nearest_cross_link_edges(
     return edges
 
 
+def _physical_bridge_edges(positions: np.ndarray, bridge_k: int) -> set[tuple[int, int]]:
+    ranges_by_link = _sensor_ranges_by_link()
+    edge_pairs: set[tuple[int, int]] = set()
+    for left_link, right_link in PHYSICAL_BRIDGE_LINK_PAIRS:
+        left_range = ranges_by_link[left_link]
+        right_range = ranges_by_link[right_link]
+        edge_pairs.update(
+            _nearest_cross_link_edges(
+                positions,
+                list(left_range.sensor_ids),
+                list(right_range.sensor_ids),
+                k=bridge_k,
+            )
+        )
+    return edge_pairs
+
+
+def _distance_threshold_edges(positions: np.ndarray, threshold: float) -> set[tuple[int, int]]:
+    dist = pairwise_sensor_distances(positions)
+    row, col = np.where(np.triu((dist <= float(threshold)) & (dist > 0), k=1))
+    return set(zip(row.tolist(), col.tolist()))
+
+
+def _knn_edges(positions: np.ndarray, k: int, allowed_mask: Optional[np.ndarray] = None) -> set[tuple[int, int]]:
+    k = min(max(0, int(k)), positions.shape[0] - 1)
+    edge_pairs: set[tuple[int, int]] = set()
+    if k == 0:
+        return edge_pairs
+
+    dist = pairwise_sensor_distances(positions)
+    np.fill_diagonal(dist, np.inf)
+    if allowed_mask is not None:
+        dist = np.where(allowed_mask, dist, np.inf)
+
+    for src in range(positions.shape[0]):
+        finite = np.isfinite(dist[src])
+        if not finite.any():
+            continue
+        src_k = min(k, int(finite.sum()))
+        nearest = np.argpartition(dist[src], kth=src_k - 1)[:src_k]
+        for dst in nearest:
+            _add_edge(edge_pairs, src, int(dst))
+    return edge_pairs
+
+
+def _extra_neighbor_allowed_mask() -> np.ndarray:
+    link_ids = _sensor_link_ids()
+    physical_neighbors = _physical_neighbor_links()
+    allowed = np.ones((368, 368), dtype=bool)
+    np.fill_diagonal(allowed, False)
+    for src in range(368):
+        src_link = link_ids[src]
+        blocked_links = physical_neighbors[src_link] | {src_link}
+        allowed[src] = np.array([dst_link not in blocked_links for dst_link in link_ids], dtype=bool)
+        allowed[src, src] = False
+    return allowed
+
+
 def _graph_from_edges(
     positions: np.ndarray,
     edge_pairs: Iterable[tuple[int, int]],
@@ -109,23 +205,8 @@ def _graph_from_edges(
 
 def build_physical_graph(sensor_positions, bridge_k: int = 1) -> WeightedSensorGraph:
     positions = as_single_frame_positions(sensor_positions)
-    ranges_by_link = _sensor_ranges_by_link()
-    edge_pairs: set[tuple[int, int]] = set()
-
-    for sensor_range in iter_sensor_ranges():
-        edge_pairs.update(_local_grid_edges(sensor_range.link_name, sensor_range.start))
-
-    for left_link, right_link in PHYSICAL_BRIDGE_LINK_PAIRS:
-        left_range = ranges_by_link[left_link]
-        right_range = ranges_by_link[right_link]
-        edge_pairs.update(
-            _nearest_cross_link_edges(
-                positions,
-                list(left_range.sensor_ids),
-                list(right_range.sensor_ids),
-                k=bridge_k,
-            )
-        )
+    edge_pairs = _pad_edges("sparse")
+    edge_pairs.update(_physical_bridge_edges(positions, bridge_k))
 
     return _graph_from_edges(
         positions,
@@ -140,9 +221,7 @@ def build_physical_graph(sensor_positions, bridge_k: int = 1) -> WeightedSensorG
 
 def build_distance_threshold_graph(sensor_positions, threshold: float = 0.02) -> WeightedSensorGraph:
     positions = as_single_frame_positions(sensor_positions)
-    dist = pairwise_sensor_distances(positions)
-    row, col = np.where(np.triu((dist <= float(threshold)) & (dist > 0), k=1))
-    edge_pairs = zip(row.tolist(), col.tolist())
+    edge_pairs = _distance_threshold_edges(positions, threshold)
     return _graph_from_edges(
         positions,
         edge_pairs,
@@ -152,19 +231,20 @@ def build_distance_threshold_graph(sensor_positions, threshold: float = 0.02) ->
 
 def build_knn_graph(sensor_positions, k: int = 6, symmetrize: bool = True) -> WeightedSensorGraph:
     positions = as_single_frame_positions(sensor_positions)
-    k = min(max(0, int(k)), positions.shape[0] - 1)
-    dist = pairwise_sensor_distances(positions)
-    np.fill_diagonal(dist, np.inf)
-    edge_pairs: set[tuple[int, int]] = set()
     directed_edges: list[tuple[int, int]] = []
-    if k > 0:
+    k = min(max(0, int(k)), positions.shape[0] - 1)
+    if k > 0 and symmetrize:
+        edge_pairs = _knn_edges(positions, k)
+    elif k > 0:
+        dist = pairwise_sensor_distances(positions)
+        np.fill_diagonal(dist, np.inf)
         nearest = np.argpartition(dist, kth=k - 1, axis=1)[:, :k]
         for src in range(positions.shape[0]):
             for dst in nearest[src]:
-                if symmetrize:
-                    _add_edge(edge_pairs, src, int(dst))
-                elif src != int(dst):
+                if src != int(dst):
                     directed_edges.append((src, int(dst)))
+    else:
+        edge_pairs = set()
 
     if symmetrize:
         return _graph_from_edges(
@@ -189,9 +269,65 @@ def build_knn_graph(sensor_positions, k: int = 6, symmetrize: bool = True) -> We
     )
 
 
+def build_custom_graph(
+    sensor_positions,
+    link_pads: Literal["none", "sparse", "dense"] = "sparse",
+    phys_bridge_k: int = 1,
+    distance_threshold: Optional[float] = None,
+    k_neighbors: int = 0,
+    k_extra_neighbors: int = 0,
+) -> WeightedSensorGraph:
+    """Build a composable Xela sensor graph from local, physical, and metric edges.
+
+    Args:
+        sensor_positions: Sensor coordinates for one frame, shape (368, 3), in meters.
+        link_pads: Controls connectivity inside each physical Xela sensor pad. ``"none"``
+            adds no intra-pad edges; sensors on the same pad can still be linked by other
+            mechanisms below. ``"sparse"`` adds local 4-neighbor taxel-grid edges inside
+            each flat or curved pad. ``"dense"`` fully connects all sensors that belong
+            to the same pad.
+        phys_bridge_k: Number of shortest inter-pad edges to add for every known physically
+            adjacent pad pair. ``0`` disables physical pad-to-pad bridges.
+        distance_threshold: Optional global radius graph threshold in meters. When provided
+            and positive, every sensor pair with Euclidean distance <= threshold is connected.
+        k_neighbors: Optional ordinary k-nearest-neighbor component. For each sensor, connect
+            to the k nearest sensors in Euclidean 3D space, then symmetrize the resulting edges.
+            ``0`` disables this component.
+        k_extra_neighbors: Optional long-range kNN component. For each sensor, candidates from
+            the same pad and from pads listed as its physical neighbors are excluded first; the
+            sensor is then connected to the k nearest remaining sensors and edges are
+            symmetrized. This adds non-local context without duplicating local pad structure or
+            direct physical bridges.
+    """
+    positions = as_single_frame_positions(sensor_positions)
+    edge_pairs = _pad_edges(link_pads)
+
+    if phys_bridge_k > 0:
+        edge_pairs.update(_physical_bridge_edges(positions, phys_bridge_k))
+    if distance_threshold is not None and distance_threshold > 0:
+        edge_pairs.update(_distance_threshold_edges(positions, distance_threshold))
+    if k_neighbors > 0:
+        edge_pairs.update(_knn_edges(positions, k_neighbors))
+    if k_extra_neighbors > 0:
+        edge_pairs.update(_knn_edges(positions, k_extra_neighbors, allowed_mask=_extra_neighbor_allowed_mask()))
+
+    return _graph_from_edges(
+        positions,
+        edge_pairs,
+        metadata={
+            "graph_type": "custom",
+            "link_pads": link_pads,
+            "phys_bridge_k": int(phys_bridge_k),
+            "distance_threshold": None if distance_threshold is None else float(distance_threshold),
+            "k_neighbors": int(k_neighbors),
+            "k_extra_neighbors": int(k_extra_neighbors),
+        },
+    )
+
+
 def build_sensor_graph(
     sensor_positions,
-    graph_type: Literal["physical", "distance_threshold", "knn"],
+    graph_type: Literal["physical", "distance_threshold", "knn", "custom"],
     **kwargs,
 ) -> WeightedSensorGraph:
     if graph_type == "physical":
@@ -200,4 +336,6 @@ def build_sensor_graph(
         return build_distance_threshold_graph(sensor_positions, **kwargs)
     if graph_type == "knn":
         return build_knn_graph(sensor_positions, **kwargs)
+    if graph_type == "custom":
+        return build_custom_graph(sensor_positions, **kwargs)
     raise ValueError(f"Unsupported graph_type={graph_type!r}")
