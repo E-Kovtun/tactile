@@ -188,6 +188,7 @@ def plot_sensor_positions(
     colors: Mapping[str, str] = HAND_PART_COLORS,
     highlight_sensor_ids: Optional[Iterable[int]] = None,
     show_sensor_ids: bool = False,
+    show_points: bool = True,
     show_legend: bool = True,
     figsize: Optional[Sequence[float]] = None,
     point_size: float = 18.0,
@@ -202,6 +203,7 @@ def plot_sensor_positions(
         colors: Matplotlib colors per hand part.
         highlight_sensor_ids: Optional sensor ids to outline in black.
         show_sensor_ids: Annotate every plotted sensor id.
+        show_points: Draw sensor markers. Disable this to show only sensor ids.
         show_legend: Add a legend to the first subplot.
         figsize: Optional figure size.
         point_size: Scatter marker size.
@@ -230,17 +232,18 @@ def plot_sensor_positions(
         for hand_part in hand_parts:
             sensor_ids = [sensor_id for sensor_id, part in sensor_to_part.items() if part == hand_part]
             pts = frame_points[sensor_ids]
-            ax.scatter(
-                pts[:, 0],
-                pts[:, 1],
-                pts[:, 2],
-                s=point_size,
-                color=colors.get(hand_part, "tab:gray"),
-                label=labels.get(hand_part, hand_part),
-                alpha=0.9,
-            )
+            if show_points:
+                ax.scatter(
+                    pts[:, 0],
+                    pts[:, 1],
+                    pts[:, 2],
+                    s=point_size,
+                    color=colors.get(hand_part, "tab:gray"),
+                    label=labels.get(hand_part, hand_part),
+                    alpha=0.9,
+                )
 
-        if highlighted:
+        if highlighted and show_points:
             pts = frame_points[highlighted]
             ax.scatter(
                 pts[:, 0],
@@ -263,7 +266,7 @@ def plot_sensor_positions(
         _set_equal_3d_limits(ax, all_points)
         ax.view_init(elev=24, azim=-58)
 
-        if show_legend and subplot_id == 1:
+        if show_legend and show_points and subplot_id == 1:
             ax.legend(loc="upper left", bbox_to_anchor=(0.0, 1.0))
 
     fig.tight_layout()
