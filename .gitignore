@@ -144,3 +144,5 @@ checkpoints/*
 
 config/data/*debug.yaml
 launch/*
+
+.DS_Store
