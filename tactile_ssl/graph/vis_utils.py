@@ -5,7 +5,8 @@ import numpy as np
 from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
-from tactile_ssl.graph.utils import HAND_PART_LABELS_RU, SENSOR_TO_HAND_PART, WeightedSensorGraph
+from tactile_ssl.graph.types import WeightedSensorGraph
+from tactile_ssl.graph.utils import HAND_PART_LABELS_RU, SENSOR_TO_HAND_PART
 
 
 HAND_PART_COLORS = {
