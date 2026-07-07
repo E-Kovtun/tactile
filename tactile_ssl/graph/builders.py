@@ -323,23 +323,43 @@ def _resolve_neighbor_count(
 
 def build_knn_graph(
     sensor_positions,
-    k: Optional[int] = None,
+    k: int = 6,
     symmetrize: bool = True,
     k_inner_neighbors: Optional[int] = None,
     k_outer_neighbors: int = 0,
 ) -> WeightedSensorGraph:
     positions = as_single_frame_positions(sensor_positions)
-    k_inner_neighbors = _resolve_neighbor_count(
-        k_inner_neighbors,
-        k,
-        default=6,
-        canonical_name="k_inner_neighbors",
-        alias_name="k",
-    )
+    k = min(max(0, int(k)), positions.shape[0] - 1)
     k_outer_neighbors = max(0, int(k_outer_neighbors))
+
+    if k_inner_neighbors is None and k_outer_neighbors == 0:
+        if symmetrize:
+            edge_pairs = _knn_edges(positions, k)
+            return _graph_from_edges(
+                positions,
+                edge_pairs,
+                metadata={"graph_type": "knn", "k_neighbors": k, "symmetrize": True},
+            )
+
+        directed_edges = _directed_knn_edges(positions, k)
+        if directed_edges:
+            edge_index = np.asarray(directed_edges, dtype=np.int64).T
+            edge_weight = np.linalg.norm(
+                positions[edge_index[0]] - positions[edge_index[1]],
+                axis=-1,
+            ).astype(np.float32)
+        else:
+            edge_index = np.zeros((2, 0), dtype=np.int64)
+            edge_weight = np.zeros((0,), dtype=np.float32)
+        return WeightedSensorGraph(
+            edge_index=edge_index,
+            edge_weight=edge_weight,
+            metadata={"graph_type": "knn", "k_neighbors": k, "symmetrize": False},
+        )
+
+    k_inner_neighbors = 0 if k_inner_neighbors is None else max(0, int(k_inner_neighbors))
     inner_mask = _same_pad_allowed_mask()
     outer_mask = _outer_neighbor_allowed_mask()
-
     if symmetrize:
         edge_pairs: set[tuple[int, int]] = set()
         if k_inner_neighbors > 0:
