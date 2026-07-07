@@ -466,6 +466,13 @@ class Trainer:
         torch.distributed.all_reduce(should_stop, op=torch.distributed.ReduceOp.MAX)
         self.should_stop = bool(should_stop.item())
 
+    def _teardown_distributed(self) -> None:
+        if not self._distributed_is_initialized():
+            return
+
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+
     def training_step(self, module: Module, batch: Any, batch_idx: int) -> torch.Tensor:
         """A single training step, running forward and backward. The optimizer step is called separately, as this is
         given as a closure to the optimizer step.
@@ -517,6 +524,7 @@ class Trainer:
 
         module.load_task(ckpt_path_to_eval)
         self.test_loop(module, test_loader)
+        self._teardown_distributed()
 
     def test_loop(
         self,
