@@ -1,7 +1,7 @@
-data_root: /workspace-SR004.nfs2/kovtun/tactile/sparsh-skin-dataset
-log_dir: /workspace-SR004.nfs2/kovtun/tactile/experiments/
-tensorboard_dir: /workspace-SR004.nfs2/kovtun/tactile/lightning_logs/
-encoder_checkpoint_root: /workspace-SR004.nfs2/kovtun/tactile/hf_checkpoints/sparsh-skin/
+data_root: ./sparsh-skin-dataset
+log_dir: ./experiments/
+tensorboard_dir: ./lightning_logs/
+encoder_checkpoint_root: ./scripts/outputs/xela_dinov2/pretrain/pretrain_dinov2_encoder_dinov2/2026.07.06_09-46/checkpoints
 
 output_dir: ${hydra:runtime.output_dir}
 work_dir: ${hydra:runtime.cwd}
