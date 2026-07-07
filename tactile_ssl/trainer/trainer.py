@@ -148,6 +148,7 @@ class Trainer:
         self._current_val_return: Optional[Union[torch.Tensor, Mapping[str, Any]]] = {}
 
         self.checkpoint_dir = save_checkpoint_dir
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
         self.checkpoint_frequency = checkpoint_frequency
         self.log_frequency = log_frequency
         self.save_probe_weights_only = save_probe_weights_only
@@ -457,6 +458,12 @@ class Trainer:
 
         return loss
 
+    @staticmethod
+    def _unwrap_module(module: Module) -> Module:
+        while hasattr(module, "module"):
+            module = module.module
+        return module
+
     def evaluate(
         self,
         module: Module,
@@ -467,7 +474,12 @@ class Trainer:
         self.fabric.launch()
 
         test_loader = self.fabric.setup_dataloaders(test_loader, use_distributed_sampler=self.use_distributed_sampler)
-        module = self.fabric.setup(module)
+        if self.state is not None and "model" in self.state:
+            module = self.state["model"]
+        else:
+            module = self.fabric.setup(module)
+
+        module = self._unwrap_module(module)
 
         if (ckpt_path_to_eval is None) and self.use_early_stopping:
             ckpt_path_to_eval = os.path.join(self.checkpoint_dir, f"{self.early_stopping_checkpoint_name}.ckpt")
