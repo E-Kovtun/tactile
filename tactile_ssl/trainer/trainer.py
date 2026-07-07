@@ -167,6 +167,7 @@ class Trainer:
                 patience=early_stopping_patience,
                 verbose=early_stopping_verbose,
                 delta=early_stopping_delta,
+                trace_func=self._rank_zero_print,
             )
             self.early_stopping_checkpoint_name = early_stopping_checkpoint_name
 
@@ -261,6 +262,7 @@ class Trainer:
                         self.save_early_stopping_checkpoint(self.early_stopping_checkpoint_name)
                     if self.early_stopping.early_stop:
                         self.should_stop = True
+                    self._sync_should_stop()
 
             self.step_scheduler(scheduler_cfg, level="epoch", current_value=self.current_epoch)
             self.step_wd_scheduler(wd_scheduler_cfg, level="epoch", current_value=self.current_epoch)
@@ -270,6 +272,7 @@ class Trainer:
             # stopping condition on epoch level
             if self.max_epochs is not None and self.current_epoch >= self.max_epochs:
                 self.should_stop = True
+            self._sync_should_stop()
 
             self.save_latest_checkpoint()
 
@@ -428,12 +431,40 @@ class Trainer:
         module.on_validation_epoch_end(self)
         self.fabric.call("on_validation_epoch_end")
 
-        self.avg_val_loss = None
-        if total_val_batches > 0:
-            self.avg_val_loss = total_val_loss / total_val_batches
+        self.avg_val_loss = self._sync_avg_val_loss(total_val_loss, total_val_batches)
 
         self.fabric.call("on_validation_model_train")
         torch.set_grad_enabled(True)
+
+    @staticmethod
+    def _distributed_is_initialized() -> bool:
+        return torch.distributed.is_available() and torch.distributed.is_initialized()
+
+    def _rank_zero_print(self, message: str) -> None:
+        if self.fabric.is_global_zero:
+            print(message)
+
+    def _sync_avg_val_loss(self, total_val_loss: float, total_val_batches: int) -> Optional[float]:
+        if not self._distributed_is_initialized():
+            return total_val_loss / total_val_batches if total_val_batches > 0 else None
+
+        stats = torch.tensor(
+            [float(total_val_loss), float(total_val_batches)],
+            device=self.fabric.device,
+            dtype=torch.float64,
+        )
+        torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM)
+        if stats[1].item() == 0:
+            return None
+        return (stats[0] / stats[1]).item()
+
+    def _sync_should_stop(self) -> None:
+        if not self._distributed_is_initialized():
+            return
+
+        should_stop = torch.tensor(int(self.should_stop), device=self.fabric.device, dtype=torch.int)
+        torch.distributed.all_reduce(should_stop, op=torch.distributed.ReduceOp.MAX)
+        self.should_stop = bool(should_stop.item())
 
     def training_step(self, module: Module, batch: Any, batch_idx: int) -> torch.Tensor:
         """A single training step, running forward and backward. The optimizer step is called separately, as this is
