@@ -6,6 +6,7 @@
 #
 
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 import os
 
@@ -26,7 +27,7 @@ from tactile_ssl.utils import get_local_rank, get_node_id
 from tactile_ssl.utils.logging import get_pylogger, print_config_tree  # noqa: E402
 from tactile_ssl.data.d360.utils import get_weights, get_experiment_name, get_modality_tag
 from tactile_ssl.utils.combined_dataset import CombinedDataset
-from tactile_ssl.data.xela.utils import compute_xela_normalization
+from tactile_ssl.data.xela.preprocessing import compute_cached_xela_normalization
 
 logger = get_pylogger(__name__)
 
@@ -61,6 +62,16 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
 
     if data_cfg.sensor == "xela":
 
+        def instantiate_xela_tasks(tasks):
+            cache_cfg = data_cfg.get("cache", {})
+            num_workers = int(cache_cfg.get("num_workers", 0))
+            if num_workers > 0 and len(tasks) > 1:
+                max_workers = min(num_workers, len(tasks))
+                logger.info(f"Loading Xela object datasets with {max_workers} cache workers")
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    return list(pool.map(lambda task: get_xela_dataset(*task), tasks))
+            return [get_xela_dataset(*task) for task in tasks]
+
         train_datasets, val_datasets, test_datasets = [], [], []
         dataset_list: List = data_cfg.dataset_list
         object_classes = []
@@ -70,36 +81,42 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
             train_dataset_ids = dataset_l.train_dataset_ids
             val_dataset_ids = dataset_l.val_dataset_ids
             test_dataset_ids = dataset_l.test_dataset_ids
+            train_tasks, val_tasks, test_tasks = [], [], []
             for obj in dataset_l.sequence_list:
+                object_class = len(object_classes)
                 object_classes.append(obj)
                 object_class_sizes.append(0)
-                for d_id in train_dataset_ids:
-                    dataset = get_xela_dataset(
-                        dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
-                    )
-                    if dataset is not None:
-                        object_class_sizes[-1] += len(dataset)
+                train_tasks.extend(
+                    (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                    for d_id in train_dataset_ids
+                )
+                val_tasks.extend(
+                    (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                    for d_id in val_dataset_ids
+                )
+                test_tasks.extend(
+                    (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                    for d_id in test_dataset_ids
+                )
+            for dataset in instantiate_xela_tasks(train_tasks):
+                if dataset is not None:
+                    object_class_sizes[dataset.object_label] += len(dataset)
                     train_datasets.append(dataset)
-                for d_id in val_dataset_ids:
-                    val_datasets.append(
-                        get_xela_dataset(
-                            dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
-                        )
-                    )
-                for d_id in test_dataset_ids:
-                    test_datasets.append(
-                        get_xela_dataset(
-                            dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
-                        )
-                    )
+            val_datasets.extend(
+                dataset for dataset in instantiate_xela_tasks(val_tasks) if dataset is not None
+            )
+            test_datasets.extend(
+                dataset for dataset in instantiate_xela_tasks(test_tasks) if dataset is not None
+            )
 
         print(f"Object class sizes: {object_class_sizes}")
+        object_class_sizes = np.asarray(object_class_sizes)
         object_class_ratios = object_class_sizes / np.sum(object_class_sizes)
         object_class_weights = 1 / object_class_ratios
         object_class_weights = object_class_weights / np.sum(object_class_weights)
         print(f"Object class weights: {object_class_weights}")
 
-        xela_mean, xela_std = compute_xela_normalization(train_datasets)
+        xela_mean, xela_std = compute_cached_xela_normalization(train_datasets)
         logger.info(f"Compute Xela normalization: mean={xela_mean}, std={xela_std}")
 
         with open_dict(cfg):

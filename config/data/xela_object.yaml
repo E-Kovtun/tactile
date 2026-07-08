@@ -28,6 +28,14 @@ normalization:
 object_classes: null
 object_class_weights: null
 
+cache:
+  enabled: true
+  root: ${paths.work_dir}/.cache/xela_artifacts
+  force_recompute: false
+  fingerprint_mode: stats
+  log_hits: true
+  num_workers: 32
+
 window_time: 0.1 
 window_overlap: 0.0
 interpolating_freq: 100
@@ -64,6 +72,7 @@ dataset_list:
         smooth_data: False
         bias_noise_std: 0
         bias_range: 0
+        cache: ${data.cache}
       data_path: ${paths.data_root}/xela/pretraining/extracted
       baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
       xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf

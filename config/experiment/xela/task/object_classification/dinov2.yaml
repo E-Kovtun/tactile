@@ -43,6 +43,7 @@ data:
           smooth_data: False
           bias_noise_std: 0
           bias_range: 0
+          cache: ${data.cache}
           features:
             use_spatial_coords: true
         data_path: ${paths.data_root}/xela/pretraining/extracted
