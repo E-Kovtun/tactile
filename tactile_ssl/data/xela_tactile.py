@@ -108,6 +108,10 @@ class XelaSSLDataset(data.Dataset):
         self.sensor_positions = cached["sensor_positions"]
         self.artifact_keys = cached["artifact_keys"]
         self.window_sensor_graphs = cached.get("window_sensor_graphs")
+        graph_cfg = config.get("graph", None)
+        self.static_graph_edges = (
+            graph_cfg is not None and str(graph_cfg.get("topology_mode", "per_window")) in {"static", "static_edges", "constant"}
+        )
 
         if VIS_POSES:
             import matplotlib.pyplot as plt
@@ -224,10 +228,11 @@ class XelaSSLDataset(data.Dataset):
         if self.window_sensor_graphs is not None:
             edge_count = int(self.window_sensor_graphs["graph_edge_count"][sample_idx])
             graph = {
-                "edge_index": torch.from_numpy(self.window_sensor_graphs["graph_edge_index"][sample_idx]).long(),
                 "edge_attr": torch.from_numpy(self.window_sensor_graphs["graph_edge_attr"][sample_idx]).float(),
                 "edge_count": torch.tensor(edge_count, dtype=torch.long),
             }
+            if not self.static_graph_edges:
+                graph["edge_index"] = torch.from_numpy(self.window_sensor_graphs["graph_edge_index"][sample_idx]).long()
             sample_dict.update({"graph": graph})
         if self.object_label is not None:
             sample_dict.update({"object_classification": torch.tensor(self.object_label)})

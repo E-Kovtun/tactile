@@ -300,6 +300,10 @@ class RelativePoseDataset(data.Dataset):
         self.cache_config = _relative_pose_cache_config(config)
         self.cache_params = _relative_pose_params_from_config(config)
         self.graph_params = _graph_params_from_config(config)
+        self.static_graph_edges = (
+            self.graph_params is not None
+            and self.graph_params["topology_mode"] in {"static", "static_edges", "constant"}
+        )
 
         self.xela_baseline = None
         if self.baseline_signal_path is not None:
@@ -593,11 +597,15 @@ class RelativePoseDataset(data.Dataset):
             graph_chunks = int(np.asarray(self.window_sensor_graphs["graph_chunks_per_sample"]).item())
             graph_start = idx * graph_chunks
             graph_end = graph_start + graph_chunks
-            sample["graph"] = {
-                "edge_index": torch.from_numpy(self.window_sensor_graphs["graph_edge_index"][graph_start:graph_end]).long(),
+            graph = {
                 "edge_attr": torch.from_numpy(self.window_sensor_graphs["graph_edge_attr"][graph_start:graph_end]).float(),
                 "edge_count": torch.from_numpy(self.window_sensor_graphs["graph_edge_count"][graph_start:graph_end]).long(),
             }
+            if not self.static_graph_edges:
+                graph["edge_index"] = torch.from_numpy(
+                    self.window_sensor_graphs["graph_edge_index"][graph_start:graph_end]
+                ).long()
+            sample["graph"] = graph
 
         return sample
 

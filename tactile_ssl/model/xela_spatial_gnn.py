@@ -169,12 +169,43 @@ def build_cached_pyg_graph_batch(
     num_nodes: int,
     device: torch.device,
     edge_mode: Literal["distance", "topology"] = "distance",
+    static_edge_index: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-    edge_index_batch = graph_info["edge_index"].to(device=device, dtype=torch.long)
     edge_count_batch = graph_info["edge_count"].to(device=device, dtype=torch.long)
     edge_attr_batch = graph_info.get("edge_attr")
     if edge_attr_batch is not None:
         edge_attr_batch = edge_attr_batch.to(device=device)
+
+    if static_edge_index is not None:
+        base_edge_index = static_edge_index.to(device=device, dtype=torch.long)
+        batch_size = edge_count_batch.shape[0]
+        edge_count = base_edge_index.shape[1]
+        if not torch.all(edge_count_batch == edge_count):
+            raise ValueError("Static graph edge_count must match the static edge_index size for every batch item")
+        offsets = torch.arange(batch_size, device=device, dtype=torch.long).view(batch_size, 1, 1) * num_nodes
+        edge_index = (base_edge_index.view(1, 2, edge_count) + offsets).permute(1, 0, 2).reshape(2, -1)
+        if edge_mode == "distance":
+            if edge_attr_batch is None:
+                edge_attr = torch.zeros((batch_size * edge_count, 1), device=device)
+            else:
+                edge_attr = edge_attr_batch[:, :edge_count].reshape(batch_size * edge_count, -1)
+            return edge_index, edge_attr
+        return edge_index, None
+
+    edge_index_batch = graph_info["edge_index"].to(device=device, dtype=torch.long)
+    if edge_count_batch.numel() > 0 and torch.all(edge_count_batch == edge_count_batch[0]):
+        batch_size = edge_index_batch.shape[0]
+        edge_count = int(edge_count_batch[0].item())
+        base_edge_index = edge_index_batch[:, :, :edge_count]
+        offsets = torch.arange(batch_size, device=device, dtype=torch.long).view(batch_size, 1, 1) * num_nodes
+        edge_index = (base_edge_index + offsets).permute(1, 0, 2).reshape(2, batch_size * edge_count)
+        if edge_mode == "distance":
+            if edge_attr_batch is None:
+                edge_attr = torch.zeros((batch_size * edge_count, 1), device=device)
+            else:
+                edge_attr = edge_attr_batch[:, :edge_count].reshape(batch_size * edge_count, -1)
+            return edge_index, edge_attr
+        return edge_index, None
 
     edge_indices = []
     edge_attrs = []
@@ -194,6 +225,14 @@ def build_cached_pyg_graph_batch(
     else:
         edge_attr = None
     return edge_index, edge_attr
+
+
+def build_static_edge_attr(positions: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    if edge_index.numel() == 0:
+        return torch.zeros((positions.shape[0], 0, 1), dtype=positions.dtype, device=positions.device)
+    src, dst = edge_index[0], edge_index[1]
+    distance = torch.linalg.norm(positions[:, src] - positions[:, dst], dim=-1)
+    return distance.unsqueeze(-1)
 
 
 class XelaSpatialGNNTransformer(SignalTransformer):
@@ -313,6 +352,7 @@ class XelaSpatialGNNTransformer(SignalTransformer):
             edge_dim=edge_dim,
         )
         self.spatial_activation = nn.ELU()
+        self.register_buffer("static_physical_edge_index", torch.empty((2, 0), dtype=torch.long), persistent=False)
 
         nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
         self.init_weights()
@@ -356,20 +396,52 @@ class XelaSpatialGNNTransformer(SignalTransformer):
             prev_idx += count
         return signal_embed
 
+    def _get_static_physical_edge_index(self, pos_ref: torch.Tensor, graph_info: Optional[dict] = None) -> torch.Tensor:
+        if self.static_physical_edge_index.numel() > 0:
+            return self.static_physical_edge_index.to(device=pos_ref.device)
+
+        if graph_info is not None and graph_info.get("edge_index") is not None:
+            edge_count = int(graph_info["edge_count"].reshape(-1)[0].item())
+            edge_index = graph_info["edge_index"].reshape(-1, 2, graph_info["edge_index"].shape[-1])[0, :, :edge_count]
+            edge_index = edge_index.detach().to(device=pos_ref.device, dtype=torch.long)
+        else:
+            edge_pairs = physical_graph_edge_pairs_torch(pos_ref[0], bridge_k=self.bridge_k)
+            if edge_pairs:
+                undirected = torch.tensor(edge_pairs, dtype=torch.long, device=pos_ref.device).t()
+                edge_index = torch.cat([undirected, undirected.flip(0)], dim=1)
+            else:
+                edge_index = torch.zeros((2, 0), dtype=torch.long, device=pos_ref.device)
+
+        self.static_physical_edge_index = edge_index.detach()
+        return self.static_physical_edge_index.to(device=pos_ref.device)
+
     def spatial_pre_embed(self, pos: torch.Tensor, num_chunks: int, graph_info: Optional[dict] = None) -> torch.Tensor:
         pos_ref = pos.mean(dim=1)
         if graph_info is None:
-            edge_index, edge_attr = build_physical_pyg_graph_batch(
-                pos_ref,
-                bridge_k=self.bridge_k,
-                edge_mode=self.edge_mode,
-            )
-        else:
+            static_edge_index = self._get_static_physical_edge_index(pos_ref)
+            edge_count = static_edge_index.shape[1]
+            graph_info = {
+                "edge_count": torch.full((pos_ref.shape[0],), edge_count, dtype=torch.long, device=pos_ref.device),
+            }
+            if self.edge_mode == "distance":
+                graph_info["edge_attr"] = build_static_edge_attr(pos_ref, static_edge_index)
             edge_index, edge_attr = build_cached_pyg_graph_batch(
                 graph_info,
                 num_nodes=pos.shape[2],
                 device=pos.device,
                 edge_mode=self.edge_mode,
+                static_edge_index=static_edge_index,
+            )
+        else:
+            static_edge_index = None
+            if graph_info.get("edge_index") is None:
+                static_edge_index = self._get_static_physical_edge_index(pos_ref)
+            edge_index, edge_attr = build_cached_pyg_graph_batch(
+                graph_info,
+                num_nodes=pos.shape[2],
+                device=pos.device,
+                edge_mode=self.edge_mode,
+                static_edge_index=static_edge_index,
             )
         node_features = pos_ref.reshape(-1, self.pos_chans)
         if self.edge_mode == "distance":

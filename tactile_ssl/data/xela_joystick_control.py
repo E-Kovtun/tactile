@@ -43,6 +43,10 @@ class XelaJoystickDataset(data.Dataset):
         self.object_label = config.get("object_label", None)
         self.with_sensor_pose = config.get("with_sensor_pose", False)
         self.graph_params = self._graph_params_from_config(config)
+        self.static_graph_edges = (
+            self.graph_params is not None
+            and self.graph_params["topology_mode"] in {"static", "static_edges", "constant"}
+        )
         assert not (self.pretrain and self.object_label is None), "Must provide object label for pretraining"
         self.output_normalize = config.get("output_normalize", False)
         self.input_nominal_freq = 100
@@ -253,11 +257,15 @@ class XelaJoystickDataset(data.Dataset):
             graph_chunks = int(np.asarray(self.window_sensor_graphs["graph_chunks_per_sample"]).item())
             graph_start = index * graph_chunks
             graph_end = graph_start + graph_chunks
-            sample_dict["graph"] = {
-                "edge_index": torch.from_numpy(self.window_sensor_graphs["graph_edge_index"][graph_start:graph_end]).long(),
+            graph = {
                 "edge_attr": torch.from_numpy(self.window_sensor_graphs["graph_edge_attr"][graph_start:graph_end]).float(),
                 "edge_count": torch.from_numpy(self.window_sensor_graphs["graph_edge_count"][graph_start:graph_end]).long(),
             }
+            if not self.static_graph_edges:
+                graph["edge_index"] = torch.from_numpy(
+                    self.window_sensor_graphs["graph_edge_index"][graph_start:graph_end]
+                ).long()
+            sample_dict["graph"] = graph
         if self.pretrain:
             sample_dict.update({"object_classification": torch.tensor(self.object_label)})
         else:
