@@ -397,6 +397,8 @@ def compare_pretrain(data_root: Path, args: argparse.Namespace, report: Report, 
 
     legacy_norm = normalization_legacy([legacy["xela_array"]])
     cached_norm = compute_xela_normalization_from_arrays([cached["xela_array"]])
+    new_norm_on_legacy = compute_xela_normalization_from_arrays([legacy["xela_array"]])
+    legacy_norm_on_cached = normalization_legacy([cached["xela_array"]])
     report.line("[normalization legacy]")
     report.kv("  mean", legacy_norm["mean"].tolist())
     report.kv("  std", legacy_norm["std"].tolist())
@@ -405,6 +407,30 @@ def compare_pretrain(data_root: Path, args: argparse.Namespace, report: Report, 
     report.kv("  std", cached_norm["std"].tolist())
     compare_arrays("pretrain.normalization.mean", legacy_norm["mean"], cached_norm["mean"], report)
     compare_arrays("pretrain.normalization.std", legacy_norm["std"], cached_norm["std"], report)
+    compare_arrays(
+        "pretrain.normalization.mean.same_legacy_array.old_formula_vs_new_formula",
+        legacy_norm["mean"],
+        new_norm_on_legacy["mean"],
+        report,
+    )
+    compare_arrays(
+        "pretrain.normalization.std.same_legacy_array.old_formula_vs_new_formula",
+        legacy_norm["std"],
+        new_norm_on_legacy["std"],
+        report,
+    )
+    compare_arrays(
+        "pretrain.normalization.mean.same_cached_array.old_formula_vs_new_formula",
+        legacy_norm_on_cached["mean"],
+        cached_norm["mean"],
+        report,
+    )
+    compare_arrays(
+        "pretrain.normalization.std.same_cached_array.old_formula_vs_new_formula",
+        legacy_norm_on_cached["std"],
+        cached_norm["std"],
+        report,
+    )
 
     cached_hit = ArtifactCache(root=str(cache_root), enabled=True, force_recompute=False, log_hits=True)
     cached_again = load_cached_xela_sequence(cached_hit, cfg, str(episode), str(urdf), str(baseline))
@@ -429,7 +455,12 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         report.line("SKIP: no force episode found")
         return
 
-    from tactile_ssl.data.xela_force import ForceDataset, _load_cached_force_episode, _load_force_episode_uncached
+    import tactile_ssl.data.xela_force as xela_force_module
+
+    ForceDataset = xela_force_module.ForceDataset
+    has_episode_helpers = hasattr(xela_force_module, "_load_cached_force_episode") and hasattr(
+        xela_force_module, "_load_force_episode_uncached"
+    )
 
     baseline = data_root / "downstream_tasks/force_estimation/base_line_fremont_hand/xela/data.pkl"
     urdf = data_root / "xela/pretraining/extracted/urdf/ahrcpcpn.urdf"
@@ -458,17 +489,27 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         "num_workers": 0,
     }
 
-    uncached = _load_force_episode_uncached(str(episode), str(urdf), str(baseline), params)
-    cached = _load_cached_force_episode((str(episode), str(urdf), str(baseline), params, cache_config))
-    for key in ["xela_array", "xela_force_array", "force_data", "timestamps", "num_frames"]:
-        summarize_array(f"force.uncached.{key}", uncached[key], report)
-        summarize_array(f"force.cached.{key}", cached[key], report)
-        compare_arrays(f"force.{key}", uncached[key], cached[key], report)
+    if has_episode_helpers:
+        report.line("force episode helpers: available")
+        uncached = xela_force_module._load_force_episode_uncached(str(episode), str(urdf), str(baseline), params)
+        cached = xela_force_module._load_cached_force_episode(
+            (str(episode), str(urdf), str(baseline), params, cache_config)
+        )
+        for key in ["xela_array", "xela_force_array", "force_data", "timestamps", "num_frames"]:
+            summarize_array(f"force.uncached.{key}", uncached[key], report)
+            summarize_array(f"force.cached.{key}", cached[key], report)
+            compare_arrays(f"force.{key}", uncached[key], cached[key], report)
 
-    cache_config["force_recompute"] = False
-    cached_again = _load_cached_force_episode((str(episode), str(urdf), str(baseline), params, cache_config))
-    compare_arrays("force.cache_hit.xela_array", cached["xela_array"], cached_again["xela_array"], report)
-    compare_arrays("force.cache_hit.force_data", cached["force_data"], cached_again["force_data"], report)
+        cache_config["force_recompute"] = False
+        cached_again = xela_force_module._load_cached_force_episode(
+            (str(episode), str(urdf), str(baseline), params, cache_config)
+        )
+        compare_arrays("force.cache_hit.xela_array", cached["xela_array"], cached_again["xela_array"], report)
+        compare_arrays("force.cache_hit.force_data", cached["force_data"], cached_again["force_data"], report)
+    else:
+        report.line(
+            "force episode helpers: not available in this checkout; falling back to ForceDataset cache on/off comparison"
+        )
 
     cfg_uncached = make_cfg(cache_root, cache_enabled=False, force_recompute=False, use_spatial_coords=True)
     cfg_cached = make_cfg(cache_root, cache_enabled=True, force_recompute=False, use_spatial_coords=True)
