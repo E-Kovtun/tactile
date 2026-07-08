@@ -516,30 +516,52 @@ def xela_flat_to_grid(xela_array):
     return sensor_images
 
 def compute_xela_normalization(xela_datasets: List, per_sensor: bool = False):
-    xela_array = []
+    total = None
+    total_sq = None
+    count = None
+    nan_count = 0
+    total_frames = 0
     for xela_dataset in xela_datasets:
         xela_array_ = xela_dataset.xela_array
         if xela_array_.shape[-1] == 4:
-            xela_array.append(xela_array_[..., 1:])
+            xela_array_ = xela_array_[..., 1:]
+        assert xela_array_.shape[-1] == 3, "Expected 3 channels"
+        assert xela_array_.shape[-2] == 368, "Expected 368 sensors"
+
+        if per_sensor:
+            out_shape = xela_array_.shape[-2:]
+            reduce_axis = 0
         else:
-            xela_array.append(xela_array_)
+            out_shape = (xela_array_.shape[-1],)
+            reduce_axis = (0, 1)
 
-    xela_array = np.concatenate(xela_array, axis=0)
+        if total is None:
+            total = np.zeros(out_shape, dtype=np.float64)
+            total_sq = np.zeros(out_shape, dtype=np.float64)
+            count = np.zeros(out_shape, dtype=np.int64)
 
-    print(f"Xela array shape: {xela_array.shape}")
-    assert xela_array.shape[-1] == 3, "Expected 3 channels"
-    assert xela_array.shape[-2] == 368, "Expected 368 sensors"
+        invalid = (xela_array_ == 0) | np.isnan(xela_array_)
+        valid = ~invalid
+        xela_array_ = xela_array_.astype(np.float64, copy=False)
+        total += np.where(valid, xela_array_, 0.0).sum(axis=reduce_axis)
+        total_sq += np.where(valid, xela_array_ * xela_array_, 0.0).sum(axis=reduce_axis)
+        count += valid.sum(axis=reduce_axis)
+        nan_count += int(invalid.sum())
+        total_frames += int(xela_array_.shape[0])
 
-    # Xela array values are 0 if there's a problem only
-    xela_array = np.where(xela_array == 0, np.nan, xela_array)
-    log.warning(f"Number of NaNs in xela_array: {np.isnan(xela_array).sum()}")
+    if total is None or total_sq is None or count is None:
+        raise ValueError("No Xela datasets provided for normalization")
 
-    xela_mean = np.nanmean(xela_array, axis=(0, 1))
-    xela_std = np.nanstd(xela_array, axis=(0, 1))
+    print(f"Xela array shape: {(total_frames, 368, 3)}")
+    log.warning(f"Number of NaNs in xela_array: {nan_count}")
+
+    xela_mean = np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
+    variance = np.divide(total_sq, count, out=np.full_like(total_sq, np.nan), where=count > 0) - xela_mean * xela_mean
+    variance = np.maximum(variance, 0.0)
+    xela_std = np.sqrt(variance)
 
     if per_sensor:
-        xela_mean = np.nanmean(xela_array, axis=0)
-        xela_std = np.nanstd(xela_array, axis=0)
+        assert xela_mean.shape == (368, 3), f"Expected per-sensor normalization shape (368, 3), got {xela_mean.shape}"
 
     return xela_mean, xela_std
 

@@ -114,23 +114,45 @@ def compute_sensor_positions(joint_poses: np.ndarray):
 
 
 def compute_xela_normalization_from_arrays(xela_arrays: list[np.ndarray], per_sensor: bool = False):
-    normalized_arrays = []
+    total = None
+    total_sq = None
+    count = None
     nan_count = 0
     for xela_array in xela_arrays:
         xela_array = np.asarray(xela_array)
         assert xela_array.shape[-1] == 3, "Expected 3 channels"
         assert xela_array.shape[-2] == 368, "Expected 368 sensors"
-        xela_array = np.where(xela_array == 0, np.nan, xela_array)
-        nan_count += int(np.isnan(xela_array).sum())
-        normalized_arrays.append(xela_array)
 
-    xela_array = np.concatenate(normalized_arrays, axis=0)
+        if per_sensor:
+            out_shape = xela_array.shape[-2:]
+            reduce_axis = 0
+        else:
+            out_shape = (xela_array.shape[-1],)
+            reduce_axis = (0, 1)
+
+        if total is None:
+            total = np.zeros(out_shape, dtype=np.float64)
+            total_sq = np.zeros(out_shape, dtype=np.float64)
+            count = np.zeros(out_shape, dtype=np.int64)
+
+        invalid = (xela_array == 0) | np.isnan(xela_array)
+        valid = ~invalid
+        xela_array = xela_array.astype(np.float64, copy=False)
+        total += np.where(valid, xela_array, 0.0).sum(axis=reduce_axis)
+        total_sq += np.where(valid, xela_array * xela_array, 0.0).sum(axis=reduce_axis)
+        count += valid.sum(axis=reduce_axis)
+        nan_count += int(invalid.sum())
+
+    if total is None or total_sq is None or count is None:
+        raise ValueError("No Xela arrays provided for normalization")
+
+    mean = np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
+    variance = np.divide(total_sq, count, out=np.full_like(total_sq, np.nan), where=count > 0) - mean * mean
+    variance = np.maximum(variance, 0.0)
+    std = np.sqrt(variance)
+
     if per_sensor:
-        mean = np.nanmean(xela_array, axis=0)
-        std = np.nanstd(xela_array, axis=0)
-    else:
-        mean = np.nanmean(xela_array, axis=(0, 1))
-        std = np.nanstd(xela_array, axis=(0, 1))
+        assert mean.shape == (368, 3), f"Expected per-sensor normalization shape (368, 3), got {mean.shape}"
 
     return {
         "mean": mean.astype(np.float32),
@@ -151,10 +173,10 @@ def compute_cached_xela_normalization(xela_datasets: list, per_sensor: bool = Fa
     }
     spec = CacheSpec(
         artifact="xela_normalization",
-        schema_version=1,
+        schema_version=2,
         semantic_params={
             "per_sensor": per_sensor,
-            "normalization_policy": "legacy_zero_as_nan_nanmean_nanstd_v1",
+            "normalization_policy": "legacy_zero_as_nan_float64_streaming_v1",
             "train_sequences": list(sequence_keys.keys()),
         },
         producer_functions=(compute_xela_normalization_from_arrays,),
