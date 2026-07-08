@@ -189,9 +189,14 @@ def dataset_inventory(datasets: list, report: Report, limit: int) -> None:
 
 def compose_cfg(args: argparse.Namespace):
     import hydra
-    from omegaconf import OmegaConf
+    from omegaconf import open_dict
 
     overrides = [args.experiment]
+    override_keys = {override.split("=", 1)[0] for override in args.override if "=" in override}
+    if "paths.work_dir" not in override_keys:
+        overrides.append(f"paths.work_dir={REPO_ROOT}")
+    if "paths.output_dir" not in override_keys:
+        overrides.append(f"paths.output_dir={REPO_ROOT / 'diagnostics' / 'hydra_dummy_output'}")
     if args.data_root is not None:
         overrides.append(f"paths.data_root={args.data_root}")
     if args.cache_root is not None:
@@ -206,7 +211,9 @@ def compose_cfg(args: argparse.Namespace):
 
     with hydra.initialize_config_dir(version_base="1.3", config_dir=str(REPO_ROOT / "config")):
         cfg = hydra.compose(config_name="default.yaml", overrides=overrides)
-    OmegaConf.resolve(cfg)
+    if args.cache_root is None and "data.cache.root" not in override_keys:
+        with open_dict(cfg):
+            cfg.data.cache.root = str(REPO_ROOT / ".cache" / "xela_train_path_normalization")
     return cfg, overrides
 
 
