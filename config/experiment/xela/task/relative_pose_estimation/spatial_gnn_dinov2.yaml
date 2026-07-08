@@ -1,0 +1,50 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_relative_pose
+  - override /task: xela_relative_pose
+  - _self_
+
+ssl_name: dinov2
+sensor: xela
+ssl_model_size: small
+checkpoint_encoder: ~
+ckpt_path: ~
+resume_id: ~
+train_data_budget: 1.0
+val_data_budget: 1.0
+
+data:
+  dataset:
+    config:
+      features:
+        use_spatial_coords: true
+
+task:
+  checkpoint_encoder: ${checkpoint_encoder}
+  model_encoder:
+    _target_: tactile_ssl.model.XelaSpatialGNNTransformer
+    in_dim: 368
+    in_chans: 6
+    sequence_length: 10
+    time_chunk_size: 10
+    embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    signal_embed_dim: 192
+    spatial_embed_dim: 192
+    spatial_gat_heads: 4
+    graph_type: physical
+    bridge_k: 4
+    edge_mode: distance
+    depth: ${model_info.${ssl_model_size}.depth}
+    num_heads: 6
+    num_register_tokens: 1
+    pos_embed_fn: learned
+    with_masktoken: true
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization:
+    causal: false
+  model_task:
+    embed_dim: ${ssl_model_size}
+    num_heads: 6

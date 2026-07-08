@@ -1,0 +1,58 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela
+  - override /algorithm: xela_dinov2
+  - _self_
+
+model_size: small
+ckpt_path: ~
+
+task_name: pretrain_spatial_gnn_encoder
+ssl_name: dinov2
+ssl_model_size: small
+experiment_name: ${task_name}_${ssl_name}
+seed: 42
+
+hydra:
+  job:
+    id: ${now:%Y.%m.%d}_${now:%H-%M}
+  run:
+    dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}
+
+run_name: ${now:%Y.%m.%d}_${now:%H-%M}
+
+data:
+  features:
+    use_spatial_coords: true
+
+trainer:
+  max_epochs: 500
+  validation_frequency: 5
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+
+algorithm:
+  centering: centering
+  encoder:
+    _target_: tactile_ssl.model.XelaSpatialGNNTransformer
+    in_dim: 368
+    in_chans: 6
+    sequence_length: 10
+    time_chunk_size: 10
+    embed_dim: ${model_embed_dim}
+    signal_embed_dim: 192
+    spatial_embed_dim: 192
+    spatial_gat_heads: 4
+    graph_type: physical
+    bridge_k: 4
+    edge_mode: distance
+    depth: ${model_info.${model_size}.depth}
+    num_heads: 6
+    num_register_tokens: 1
+    pos_embed_fn: learned
+    with_masktoken: true
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization: ${data.normalization}
+    causal: false

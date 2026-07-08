@@ -1,0 +1,80 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_object
+  - override /task: xela_object_classification
+  - _self_
+
+sensor: xela
+ssl_name: dinov2
+ssl_model_size: small
+checkpoint_encoder: ~
+ckpt_path: ~
+resume_id: ~
+
+data:
+  dataset_list:
+    - type: teleop
+      sequence_list:
+        - corn
+        - rubikscube
+        - metalcup
+        - cup
+        - ball
+        - drill
+        - mustard
+        - lego
+        - pringle
+        - legopool
+        - watermelon
+        - popcorn
+        - loofah
+        - slipper
+      train_dataset_ids: [0, 1, 2, 3, 4, 5, 6, 7]
+      val_dataset_ids: [8]
+      test_dataset_ids: [9]
+      dataset:
+        _target_: tactile_ssl.data.xela_tactile.XelaSSLDataset
+        config:
+          window_time: ${data.window_time}
+          window_overlap: ${data.window_overlap}
+          interpolating_freq: ${data.interpolating_freq}
+          subtract_baseline: true
+          smooth_data: false
+          bias_noise_std: 0
+          bias_range: 0
+          cache: ${data.cache}
+          features:
+            use_spatial_coords: true
+        data_path: ${paths.data_root}/xela/pretraining/extracted
+        baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
+        xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+        load_images: false
+
+task:
+  checkpoint_encoder: ${checkpoint_encoder}
+  model_encoder:
+    _target_: tactile_ssl.model.XelaSpatialGNNTransformer
+    in_dim: 368
+    in_chans: 6
+    sequence_length: 10
+    time_chunk_size: 10
+    embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    signal_embed_dim: 192
+    spatial_embed_dim: 192
+    spatial_gat_heads: 4
+    graph_type: physical
+    bridge_k: 4
+    edge_mode: distance
+    depth: ${model_info.${ssl_model_size}.depth}
+    num_heads: 6
+    num_register_tokens: 1
+    pos_embed_fn: learned
+    with_masktoken: true
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization:
+    causal: false
+  model_task:
+    input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}

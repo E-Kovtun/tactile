@@ -15,7 +15,7 @@ from tactile_ssl.downstream_task.sl_module import SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
-from tactile_ssl.model.xela_transformer import XelaTransformer
+from tactile_ssl.model.signal_transformer import SignalTransformer
 from tactile_ssl.model import VIT_EMBED_DIMS
 
 
@@ -151,7 +151,7 @@ class XelaRelativePoseDecoder(nn.Module):
 class XelaRelativePoseModule(SLModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(self.model_encoder, XelaTransformer), "Model encoder must be a XelaTransformer"
+        assert isinstance(self.model_encoder, SignalTransformer), "Model encoder must be a SignalTransformer"
         self.sequence_length, self.time_chunk_size = (
             self.model_encoder.sequence_length,
             self.model_encoder.time_chunk_size,
@@ -376,6 +376,5 @@ class XelaRelativePoseModule(SLModule):
 
         for i, (auc_val, axis) in enumerate(zip([auc_x_1mm, auc_y_1mm, auc_theta_1deg], ["_x", "_y", "_theta"])):
             trainer_instance.writer.add_scalar(f"{stage}/acc{axis}", auc_val, 0)
-
 
 
