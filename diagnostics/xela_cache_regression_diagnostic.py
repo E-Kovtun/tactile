@@ -256,6 +256,14 @@ def find_downstream_episode(data_root: Path, task_dir: str, stage: str, explicit
     if not stage_dir.exists():
         return None
     dirs = sorted([p for p in stage_dir.iterdir() if p.is_dir()])
+    for path in dirs:
+        if (path / "xela/data.pkl").exists():
+            return path
+    for path in dirs:
+        nested_dirs = sorted([p for p in path.iterdir() if p.is_dir()])
+        for nested_path in nested_dirs:
+            if (nested_path / "xela/data.pkl").exists():
+                return nested_path
     return dirs[0] if dirs else None
 
 

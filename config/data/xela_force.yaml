@@ -25,6 +25,7 @@ dataset:
     interpolating_freq: 100
     normal_force_contact_threshold: 0.15
     max_normal_force: [1.0, 1.0, 5.0]
+    cache: ${data.cache}
 
 train_dataloader:
   batch_size: 64
