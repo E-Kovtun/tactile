@@ -113,32 +113,27 @@ def compute_sensor_positions(joint_poses: np.ndarray):
 
 
 def compute_xela_normalization_from_arrays(xela_arrays: list[np.ndarray], per_sensor: bool = False):
-    count = None
-    total = None
-    total_sq = None
+    normalized_arrays = []
     nan_count = 0
     for xela_array in xela_arrays:
+        xela_array = np.asarray(xela_array)
         assert xela_array.shape[-1] == 3, "Expected 3 channels"
         assert xela_array.shape[-2] == 368, "Expected 368 sensors"
-        axis = 0 if per_sensor else (0, 1)
-        valid_mask = xela_array != 0
-        values = np.where(valid_mask, xela_array, 0).astype(np.float64, copy=False)
-        batch_count = valid_mask.sum(axis=axis).astype(np.float64)
-        batch_total = values.sum(axis=axis)
-        batch_total_sq = np.square(values).sum(axis=axis)
-        if count is None:
-            count, total, total_sq = batch_count, batch_total, batch_total_sq
-        else:
-            count += batch_count
-            total += batch_total
-            total_sq += batch_total_sq
-        nan_count += int((~valid_mask).sum())
+        xela_array = np.where(xela_array == 0, np.nan, xela_array)
+        nan_count += int(np.isnan(xela_array).sum())
+        normalized_arrays.append(xela_array)
 
-    mean = total / count
-    variance = np.maximum((total_sq / count) - np.square(mean), 0)
+    xela_array = np.concatenate(normalized_arrays, axis=0)
+    if per_sensor:
+        mean = np.nanmean(xela_array, axis=0)
+        std = np.nanstd(xela_array, axis=0)
+    else:
+        mean = np.nanmean(xela_array, axis=(0, 1))
+        std = np.nanstd(xela_array, axis=(0, 1))
+
     return {
         "mean": mean.astype(np.float32),
-        "std": np.sqrt(variance).astype(np.float32),
+        "std": std.astype(np.float32),
         "nan_count": np.asarray([nan_count], dtype=np.int64),
     }
 
@@ -158,7 +153,7 @@ def compute_cached_xela_normalization(xela_datasets: list, per_sensor: bool = Fa
         schema_version=1,
         semantic_params={
             "per_sensor": per_sensor,
-            "normalization_policy": "ignore_zero_values_v1",
+            "normalization_policy": "legacy_zero_as_nan_nanmean_nanstd_v1",
             "train_sequences": list(sequence_keys.keys()),
         },
         producer_functions=(compute_xela_normalization_from_arrays,),
