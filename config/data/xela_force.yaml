@@ -6,6 +6,13 @@ max_val_data: 25000
 
 sensor: xela
 
+cache:
+  enabled: true
+  root: ${paths.work_dir}/.cache/xela_artifacts
+  force_recompute: false
+  log_hits: true
+  num_workers: 0
+
 dataset:
   _target_: tactile_ssl.data.xela_force.ForceDataset.create_from_files
   data_path: ${paths.data_root}/downstream_tasks/force_estimation/
@@ -42,4 +49,3 @@ test_dataloader:
   pin_memory: True
   persistent_workers: True
   shuffle: False
-

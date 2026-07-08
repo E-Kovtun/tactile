@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 from typing import Optional, List
 import pickle
 from pathlib import Path
@@ -21,12 +22,224 @@ from tactile_ssl.data.xela.utils import (
     joint_angles_to_poses,
     xela_flat_to_grid,
 )
+from tactile_ssl.data.cache import ArtifactCache, CacheSpec
+from tactile_ssl.data.cache.fingerprint import file_fingerprint
 
 from torchvision import transforms
 
 logger = get_pylogger(__name__)
 
 USE_RELATIVE_POSES = False
+
+
+def _ensure_relative_pose_cache_config(config: DictConfig) -> None:
+    if config.get("cache") is None:
+        config.cache = {}
+    if config.cache.get("enabled") is None:
+        config.cache.enabled = True
+    if config.cache.get("root") is None:
+        config.cache.root = ".cache/xela_artifacts"
+    if config.cache.get("force_recompute") is None:
+        config.cache.force_recompute = False
+    if config.cache.get("log_hits") is None:
+        config.cache.log_hits = True
+    if config.cache.get("num_workers") is None:
+        config.cache.num_workers = 0
+
+
+def _relative_pose_cache_config(config: DictConfig) -> dict:
+    return {
+        "root": str(config.cache.root),
+        "enabled": bool(config.cache.enabled),
+        "force_recompute": bool(config.cache.force_recompute),
+        "log_hits": bool(config.cache.log_hits),
+        "num_workers": int(config.cache.num_workers),
+    }
+
+
+def _relative_pose_params_from_config(config: DictConfig) -> dict:
+    nominal_freq = int(config.interpolating_freq)
+    return {
+        "nominal_freq": nominal_freq,
+        "pose_nominal_freq": nominal_freq // 10,
+        "subtract_baseline": bool(config.subtract_baseline),
+        "use_spatial_coords": bool(config.features.use_spatial_coords),
+        "window_time": float(config.window_time),
+        "use_relative_poses": bool(USE_RELATIVE_POSES),
+    }
+
+
+def _relative_pose_episode_fingerprints(data_path: Path, baseline_signal_path: Optional[str], urdf_path: str) -> dict:
+    return {
+        "xela": file_fingerprint(str(data_path / "xela/data.pkl")),
+        "allegro": file_fingerprint(str(data_path / "allegro/data.pkl")),
+        "object_pose": file_fingerprint(str(data_path / "object_pose.pkl")),
+        "baseline": file_fingerprint(baseline_signal_path),
+        "urdf": file_fingerprint(urdf_path),
+    }
+
+
+def _load_relative_pose_episode_uncached(
+    data_path: str,
+    urdf_path: str,
+    baseline_signal_path: Optional[str],
+    params: dict,
+) -> dict[str, np.ndarray]:
+    data_path = Path(data_path)
+    xela_baseline = None
+    if baseline_signal_path is not None:
+        with open(baseline_signal_path, "rb") as f:
+            baseline_signal = np.asarray(pickle.load(f))
+        xela_baseline = np.mean(baseline_signal[:, :, 1:], axis=0)
+    xela_kinematic_chain = pk.build_chain_from_urdf(open(urdf_path).read())
+    xela_array, relative_pose_data, relative_pose_planar, timestamps, num_frames = _compute_relative_pose_episode(
+        data_path=data_path,
+        xela_baseline=xela_baseline,
+        xela_kinematic_chain=xela_kinematic_chain,
+        params=params,
+    )
+    return {
+        "xela_array": xela_array,
+        "relative_pose_data": relative_pose_data,
+        "relative_pose_planar": relative_pose_planar,
+        "timestamps": timestamps,
+        "num_frames": np.asarray(num_frames, dtype=np.int64),
+    }
+
+
+def _load_cached_relative_pose_episode(args: tuple[str, str, Optional[str], dict, dict]) -> dict[str, np.ndarray]:
+    data_path, urdf_path, baseline_signal_path, params, cache_config = args
+    if not cache_config["enabled"]:
+        return _load_relative_pose_episode_uncached(data_path, urdf_path, baseline_signal_path, params)
+
+    data_path_obj = Path(data_path)
+    cache = ArtifactCache(
+        root=cache_config["root"],
+        enabled=cache_config["enabled"],
+        force_recompute=cache_config["force_recompute"],
+        log_hits=cache_config["log_hits"],
+    )
+    spec = CacheSpec(
+        artifact="xela_relative_pose_episode",
+        schema_version=1,
+        semantic_params={
+            "data_path": str(data_path_obj),
+            "files": _relative_pose_episode_fingerprints(data_path_obj, baseline_signal_path, urdf_path),
+            "preprocessing": params,
+        },
+        producer_functions=(
+            _load_relative_pose_episode_uncached,
+            _compute_relative_pose_episode,
+            read_xela_data,
+            read_allegro_joint_data,
+            read_pose_data,
+            joint_angles_to_poses,
+            compute_interp_timestamps,
+        ),
+        producer_constants={"XELA_FLATTEN_ORDER": XELA_FLATTEN_ORDER},
+    )
+    arrays, _ = cache.get_or_compute(
+        spec,
+        lambda: _load_relative_pose_episode_uncached(data_path, urdf_path, baseline_signal_path, params),
+        metadata={"data_path": str(data_path_obj)},
+    )
+    return arrays
+
+
+def _relative_pose_arrays_to_tuple(
+    arrays: dict[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    return (
+        arrays["xela_array"],
+        arrays["relative_pose_data"],
+        arrays["relative_pose_planar"],
+        arrays["timestamps"],
+        int(np.asarray(arrays["num_frames"]).item()),
+    )
+
+
+def _compute_relative_pose_episode(data_path: Path, xela_baseline, xela_kinematic_chain, params: dict):
+    skin_pkl_path = data_path / "xela/data.pkl"
+    allegro_pkl_path = data_path / "allegro/data.pkl"
+    object_pose_pkl_path = data_path / "object_pose.pkl"
+
+    assert skin_pkl_path.exists(), f"Xela skin data not found at {skin_pkl_path}"
+    assert object_pose_pkl_path.exists(), f"Object pose data not found at {object_pose_pkl_path}"
+
+    with open(allegro_pkl_path, "rb") as f:
+        allegro_data = pickle.load(f)
+    allegro_data = np.array(allegro_data["joint_states"])
+
+    with open(skin_pkl_path, "rb") as f:
+        skin_data = pickle.load(f)
+    skin_data = np.asarray(skin_data)
+
+    with open(object_pose_pkl_path, "rb") as f:
+        base_T_object = pickle.load(f)
+    base_T_object = np.asarray(base_T_object)
+
+    nominal_freq = int(params["nominal_freq"])
+    pose_nominal_freq = int(params["pose_nominal_freq"])
+    subsampling_ratio = nominal_freq // pose_nominal_freq
+
+    timestamps, num_frames = compute_interp_timestamps(
+        [skin_data[:, 0, 0], allegro_data[:, 0], base_T_object[:, 0]], nominal_freq
+    )
+    pose_timestamps = timestamps[::subsampling_ratio]
+
+    xela_array = read_xela_data(skin_data, timestamps, nominal_freq, False)
+    joint_angles, _ = read_allegro_joint_data(allegro_data, timestamps, nominal_freq, False)
+    sensor_positions = joint_angles_to_poses(xela_kinematic_chain, joint_angles)
+
+    mask = xela_array[:, ..., 1] != 0
+    if params["subtract_baseline"] and xela_baseline is not None:
+        baseline = einops.repeat(xela_baseline, "k c -> b k c", b=xela_array.shape[0])
+        xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
+
+    xela_array = xela_array[..., 1:]
+    if params["use_spatial_coords"]:
+        xela_array = np.concatenate([xela_array, sensor_positions], axis=-1)
+
+    base_T_object = read_pose_data(base_T_object, pose_timestamps, pose_nominal_freq)
+    base_T_object = base_T_object[..., 1:]  # Strip the timestamps
+
+    if params["use_relative_poses"]:
+        base_T_object_1 = base_T_object[1:]
+        base_T_object_0 = base_T_object[:-1]
+
+        base_R_object_1 = Rotation.from_quat(base_T_object_1[:, 3:])
+        base_R_object_0 = Rotation.from_quat(base_T_object_0[:, 3:])
+
+        object_0_R_object_1 = base_R_object_0.inv() * base_R_object_1
+        object_0_R_object_1_quat = object_0_R_object_1.as_quat(canonical=True)
+
+        object_0_t_object_1 = object_0_R_object_1.inv().apply(base_T_object_1[:, :3] - base_T_object_0[:, :3])
+    else:
+        object_0_R_object_1 = Rotation.from_quat(base_T_object[:, 3:])
+        object_0_R_object_1_quat = object_0_R_object_1.as_quat(canonical=True)
+        object_0_t_object_1 = base_T_object[:, :3]
+
+    relative_pose_data = np.concatenate([object_0_t_object_1, object_0_R_object_1_quat], axis=1)
+
+    relative_pose_rot = object_0_R_object_1.as_euler("zxy", degrees=True)
+    # x, y in m and theta in degrees
+    relative_pose_planar = np.concatenate([object_0_t_object_1[:, :2], relative_pose_rot[:, 1:2]], axis=1)
+    pose_data_smooth = savgol_filter(relative_pose_planar, 10, 3, axis=0)
+
+    pose_R_smooth = np.eye(3)
+    pose_R_smooth = einops.repeat(pose_R_smooth, "i j -> b i j", b=pose_data_smooth.shape[0])
+    pose_R_smooth[:, :2, 2] = pose_data_smooth[:, :2]
+    pose_R_smooth[:, :2, :2] = Rotation.from_euler("z", pose_data_smooth[:, 2], degrees=True).as_matrix()[:, :2, :2]
+
+    # Clip the length of the data to match the pose data
+    max_pose_length = min(len(pose_data_smooth), len(xela_array) // 10)
+    xela_array = xela_array[: max_pose_length * subsampling_ratio]
+    timestamps = timestamps[: max_pose_length * subsampling_ratio]
+    pose_data_smooth = pose_data_smooth[:max_pose_length]
+    relative_pose_data = relative_pose_data[:max_pose_length]
+    num_frames = max_pose_length * subsampling_ratio
+
+    return xela_array, relative_pose_data, pose_data_smooth, timestamps, num_frames
 
 
 class RelativePoseDataset(data.Dataset):
@@ -45,6 +258,7 @@ class RelativePoseDataset(data.Dataset):
             config.features = {}
         if config.features.get("use_spatial_coords") is None:
             config.features.use_spatial_coords = False
+        _ensure_relative_pose_cache_config(config)
 
         self.datapath_list = data_list
         self.window_time = config.window_time
@@ -59,6 +273,8 @@ class RelativePoseDataset(data.Dataset):
         self.num_frames_per_window = int(round(self.window_time * self.nominal_freq))
         self.target_frames_per_window = int(round(self.window_time * self.pose_nominal_freq))
         self.discretize = config.discretize
+        self.cache_config = _relative_pose_cache_config(config)
+        self.cache_params = _relative_pose_params_from_config(config)
 
         self.xela_baseline = None
         if self.baseline_signal_path is not None:
@@ -73,9 +289,9 @@ class RelativePoseDataset(data.Dataset):
         relative_pose_planar = []
         timestamps = []
         num_frames = []
-        for i, data_path in enumerate(self.datapath_list):
+        for i, data in enumerate(self.load_episode_data(urdf_path)):
+            data_path = self.datapath_list[i]
             print(f"{i}, Loading data from {data_path}")
-            data = self.load_data(data_path)
             xela_array.append(data[0])
             relative_pose_data.append(data[1])
             relative_pose_planar.append(data[2])
@@ -114,6 +330,22 @@ class RelativePoseDataset(data.Dataset):
         if self.target_normalize:
             self.target_transform = transforms.Lambda(lambda x: (x - self.target_mean) / self.target_std)
 
+    def load_episode_data(self, urdf_path):
+        if self.cache_config["enabled"]:
+            args = [
+                (str(data_path), urdf_path, self.baseline_signal_path, self.cache_params, self.cache_config)
+                for data_path in self.datapath_list
+            ]
+            if self.cache_config["num_workers"] > 0 and len(args) > 1:
+                with ProcessPoolExecutor(max_workers=self.cache_config["num_workers"]) as pool:
+                    return [
+                        _relative_pose_arrays_to_tuple(arrays)
+                        for arrays in pool.map(_load_cached_relative_pose_episode, args)
+                    ]
+            return [_relative_pose_arrays_to_tuple(_load_cached_relative_pose_episode(arg)) for arg in args]
+
+        return [self.load_data(data_path) for data_path in self.datapath_list]
+
     def get_idx_to_episode_idx(self, relative_pose_planar):
         idx_to_episode_idx = []
         episode_offset = 0
@@ -134,85 +366,12 @@ class RelativePoseDataset(data.Dataset):
         return idx_to_episode_idx
 
     def load_data(self, data_path):
-        skin_pkl_path = data_path / "xela/data.pkl"
-        allegro_pkl_path = data_path / "allegro/data.pkl"
-        object_pose_pkl_path = data_path / "object_pose.pkl"
-
-        assert skin_pkl_path.exists(), f"Xela skin data not found at {skin_pkl_path}"
-        assert object_pose_pkl_path.exists(), f"Object pose data not found at {object_pose_pkl_path}"
-
-        with open(allegro_pkl_path, "rb") as f:
-            allegro_data = pickle.load(f)
-        allegro_data = np.array(allegro_data["joint_states"])
-
-        with open(skin_pkl_path, "rb") as f:
-            skin_data = pickle.load(f)
-        skin_data = np.asarray(skin_data)
-
-        with open(object_pose_pkl_path, "rb") as f:
-            base_T_object = pickle.load(f)
-        base_T_object = np.asarray(base_T_object)
-
-        subsampling_ratio = self.nominal_freq // self.pose_nominal_freq
-
-        timestamps, num_frames = compute_interp_timestamps(
-            [skin_data[:, 0, 0], allegro_data[:, 0], base_T_object[:, 0]], self.nominal_freq
+        return _compute_relative_pose_episode(
+            data_path=data_path,
+            xela_baseline=self.xela_baseline,
+            xela_kinematic_chain=self.xela_kinematic_chain,
+            params=self.cache_params,
         )
-        pose_timestamps = timestamps[::subsampling_ratio]
-
-        xela_array = read_xela_data(skin_data, timestamps, self.nominal_freq, False)
-        joint_angles, _ = read_allegro_joint_data(allegro_data, timestamps, self.nominal_freq, False)
-        sensor_positions = joint_angles_to_poses(self.xela_kinematic_chain, joint_angles)
-
-        mask = xela_array[:, ..., 1] != 0
-        if self.subtract_baseline and self.xela_baseline is not None:
-            baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=xela_array.shape[0])
-            xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
-
-        xela_array = xela_array[..., 1:]
-        if self.use_spatial_coords:
-            xela_array = np.concatenate([xela_array, sensor_positions], axis=-1)
-
-        base_T_object = read_pose_data(base_T_object, pose_timestamps, self.pose_nominal_freq)
-        base_T_object = base_T_object[..., 1:]  # Strip the timestamps
-
-        if USE_RELATIVE_POSES:
-            base_T_object_1 = base_T_object[1:]
-            base_T_object_0 = base_T_object[:-1]
-
-            base_R_object_1 = Rotation.from_quat(base_T_object_1[:, 3:])
-            base_R_object_0 = Rotation.from_quat(base_T_object_0[:, 3:])
-
-            object_0_R_object_1 = base_R_object_0.inv() * base_R_object_1
-            object_0_R_object_1_quat = object_0_R_object_1.as_quat(canonical=True)
-
-            object_0_t_object_1 = object_0_R_object_1.inv().apply(base_T_object_1[:, :3] - base_T_object_0[:, :3])
-        else:
-            object_0_R_object_1 = Rotation.from_quat(base_T_object[:, 3:])
-            object_0_R_object_1_quat = object_0_R_object_1.as_quat(canonical=True)
-            object_0_t_object_1 = base_T_object[:, :3]
-
-        relative_pose_data = np.concatenate([object_0_t_object_1, object_0_R_object_1_quat], axis=1)
-
-        relative_pose_rot = object_0_R_object_1.as_euler("zxy", degrees=True)
-        # x, y in m and theta in degrees
-        relative_pose_planar = np.concatenate([object_0_t_object_1[:, :2], relative_pose_rot[:, 1:2]], axis=1)
-        pose_data_smooth = savgol_filter(relative_pose_planar, 10, 3, axis=0)
-
-        pose_R_smooth = np.eye(3)
-        pose_R_smooth = einops.repeat(pose_R_smooth, "i j -> b i j", b=pose_data_smooth.shape[0])
-        pose_R_smooth[:, :2, 2] = pose_data_smooth[:, :2]
-        pose_R_smooth[:, :2, :2] = Rotation.from_euler("z", pose_data_smooth[:, 2], degrees=True).as_matrix()[:, :2, :2]
-
-        # Clip the length of the data to match the pose data
-        max_pose_length = min(len(pose_data_smooth), len(xela_array) // 10)
-        xela_array = xela_array[: max_pose_length * subsampling_ratio]
-        timestamps = timestamps[: max_pose_length * subsampling_ratio]
-        pose_data_smooth = pose_data_smooth[:max_pose_length]
-        relative_pose_data = relative_pose_data[:max_pose_length]
-        num_frames = max_pose_length * subsampling_ratio
-
-        return xela_array, relative_pose_data, pose_data_smooth, timestamps, num_frames
 
     def compute_target_stats(self, relative_pose_planar):
         relative_pose_planar = np.concatenate(relative_pose_planar, axis=0)

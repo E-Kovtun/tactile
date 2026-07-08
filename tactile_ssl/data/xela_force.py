@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 from typing import Optional, List
 import pickle
 from pathlib import Path
@@ -21,10 +22,249 @@ from tactile_ssl.data.xela.utils import (
     joint_angles_to_poses,
     xela_flat_to_grid,
 )
+from tactile_ssl.data.cache import ArtifactCache, CacheSpec
+from tactile_ssl.data.cache.fingerprint import file_fingerprint
 
 from torchvision import transforms
 
 logger = get_pylogger(__name__)
+
+
+def _ensure_force_cache_config(config: DictConfig) -> None:
+    if config.get("cache") is None:
+        config.cache = {}
+    if config.cache.get("enabled") is None:
+        config.cache.enabled = True
+    if config.cache.get("root") is None:
+        config.cache.root = ".cache/xela_artifacts"
+    if config.cache.get("force_recompute") is None:
+        config.cache.force_recompute = False
+    if config.cache.get("log_hits") is None:
+        config.cache.log_hits = True
+    if config.cache.get("num_workers") is None:
+        config.cache.num_workers = 0
+
+
+def _force_cache_config(config: DictConfig) -> dict:
+    return {
+        "root": str(config.cache.root),
+        "enabled": bool(config.cache.enabled),
+        "force_recompute": bool(config.cache.force_recompute),
+        "log_hits": bool(config.cache.log_hits),
+        "num_workers": int(config.cache.num_workers),
+    }
+
+
+def _force_params_from_config(config: DictConfig) -> dict:
+    nominal_freq = int(config.interpolating_freq)
+    return {
+        "normal_force_contact_threshold": float(config.normal_force_contact_threshold),
+        "nominal_freq": nominal_freq,
+        "force_nominal_freq": nominal_freq,
+        "max_normal_force": list(config.max_normal_force),
+        "subtract_baseline": bool(config.subtract_baseline),
+        "use_spatial_coords": bool(config.features.use_spatial_coords),
+        "window_time": float(config.window_time),
+    }
+
+
+def _force_episode_fingerprints(data_path: Path, baseline_signal_path: Optional[str], urdf_path: str) -> dict:
+    return {
+        "xela": file_fingerprint(str(data_path / "xela/data.pkl")),
+        "xela_force": file_fingerprint(str(data_path / "xela/forces.pkl")),
+        "allegro": file_fingerprint(str(data_path / "allegro/data.pkl")),
+        "force": file_fingerprint(str(data_path / "data.pkl")),
+        "baseline": file_fingerprint(baseline_signal_path),
+        "urdf": file_fingerprint(urdf_path),
+    }
+
+
+def _load_force_episode_uncached(
+    data_path: str,
+    urdf_path: str,
+    baseline_signal_path: Optional[str],
+    params: dict,
+) -> dict[str, np.ndarray]:
+    data_path = Path(data_path)
+    xela_baseline = None
+    if baseline_signal_path is not None:
+        with open(baseline_signal_path, "rb") as f:
+            baseline_signal = np.asarray(pickle.load(f))
+        xela_baseline = np.mean(baseline_signal[:, :, 1:], axis=0)
+    xela_kinematic_chain = pk.build_chain_from_urdf(open(urdf_path).read())
+    xela_array, xela_force_array, force_data, timestamps, num_frames = _compute_force_episode(
+        data_path=data_path,
+        xela_baseline=xela_baseline,
+        xela_kinematic_chain=xela_kinematic_chain,
+        params=params,
+    )
+    return {
+        "xela_array": xela_array,
+        "xela_force_array": xela_force_array,
+        "force_data": force_data,
+        "timestamps": timestamps,
+        "num_frames": np.asarray(num_frames, dtype=np.int64),
+    }
+
+
+def _load_cached_force_episode(args: tuple[str, str, Optional[str], dict, dict]) -> dict[str, np.ndarray]:
+    data_path, urdf_path, baseline_signal_path, params, cache_config = args
+    if not cache_config["enabled"]:
+        return _load_force_episode_uncached(data_path, urdf_path, baseline_signal_path, params)
+
+    data_path_obj = Path(data_path)
+    cache = ArtifactCache(
+        root=cache_config["root"],
+        enabled=cache_config["enabled"],
+        force_recompute=cache_config["force_recompute"],
+        log_hits=cache_config["log_hits"],
+    )
+    spec = CacheSpec(
+        artifact="xela_force_episode",
+        schema_version=1,
+        semantic_params={
+            "data_path": str(data_path_obj),
+            "files": _force_episode_fingerprints(data_path_obj, baseline_signal_path, urdf_path),
+            "preprocessing": params,
+        },
+        producer_functions=(
+            _load_force_episode_uncached,
+            _compute_force_episode,
+            read_xela_data,
+            read_allegro_joint_data,
+            read_force_data,
+            joint_angles_to_poses,
+            compute_interp_timestamps,
+        ),
+        producer_constants={"XELA_FLATTEN_ORDER": XELA_FLATTEN_ORDER},
+    )
+    arrays, _ = cache.get_or_compute(
+        spec,
+        lambda: _load_force_episode_uncached(data_path, urdf_path, baseline_signal_path, params),
+        metadata={"data_path": str(data_path_obj)},
+    )
+    return arrays
+
+
+def _force_arrays_to_tuple(arrays: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    return (
+        arrays["xela_array"],
+        arrays["xela_force_array"],
+        arrays["force_data"],
+        arrays["timestamps"],
+        int(np.asarray(arrays["num_frames"]).item()),
+    )
+
+
+def _compute_force_episode(data_path: Path, xela_baseline, xela_kinematic_chain, params: dict):
+    skin_pkl_path = data_path / "xela/data.pkl"
+    skin_pkl_force_path = data_path / "xela/forces.pkl"
+    allegro_pkl_path = data_path / "allegro/data.pkl"
+    force_pkl_path = data_path / "data.pkl"
+
+    assert skin_pkl_path.exists(), f"Xela skin data not found at {skin_pkl_path}"
+    assert force_pkl_path.exists(), f"Force data not found at {force_pkl_path}"
+
+    with open(skin_pkl_path, "rb") as f:
+        skin_data = pickle.load(f)
+    skin_data = np.asarray(skin_data)
+
+    with open(skin_pkl_force_path, "rb") as f:
+        skin_force_data = pickle.load(f)
+    skin_force_data = np.asarray(skin_force_data)
+
+    if not allegro_pkl_path.exists():
+        # allegro is kept flat. Setting a fix allegro joint state
+        allegro_joint_state = np.array(
+            [
+                [
+                    3.76105724e-01,
+                    -2.54875702e-01,
+                    -2.64896910e-01,
+                    -1.27969950e-01,
+                    5.00173611e-02,
+                    -2.60374064e-01,
+                    -2.85205378e-01,
+                    -2.55141751e-01,
+                    -1.27792584e-01,
+                    -2.41839262e-01,
+                    -2.57092783e-01,
+                    4.34902728e-01,
+                    2.60994847e-01,
+                    -3.90028996e-01,
+                    1.50069820e00,
+                    3.44889215e-01,
+                    -8.17324002e-04,
+                    -1.05262663e-03,
+                    4.13282548e-03,
+                    -8.95508305e-03,
+                    6.96885109e-02,
+                    1.30731142e-03,
+                    2.55328768e-03,
+                    5.62274925e-02,
+                    5.00000000e-01,
+                    4.12439429e-03,
+                    -1.48203024e-02,
+                    -5.00000000e-01,
+                    5.62450390e-04,
+                    2.74799718e-07,
+                    -1.74512554e-02,
+                    -1.01071438e-03,
+                ]
+            ]
+        )
+        allegro_data = np.repeat(allegro_joint_state, len(skin_data), axis=0)
+        allegro_data = np.hstack((skin_data[:, 0, 0].reshape(-1, 1), allegro_data))
+    else:
+        with open(allegro_pkl_path, "rb") as f:
+            allegro_data = pickle.load(f)
+        allegro_data = np.array(allegro_data["joint_states"])
+
+    with open(force_pkl_path, "rb") as f:
+        force_data = pickle.load(f)
+    force_data = np.array(force_data["force"])
+
+    nominal_freq = int(params["nominal_freq"])
+    force_nominal_freq = int(params["force_nominal_freq"])
+    subsampling_ratio = nominal_freq // force_nominal_freq
+
+    timestamps, num_frames = compute_interp_timestamps(
+        [skin_data[:, 0, 0], allegro_data[:, 0], force_data[:, 0]], nominal_freq
+    )
+
+    # force_timestamps = timestamps[::subsampling_ratio]
+    force_timestamps = timestamps
+
+    xela_array, xela_force_array = read_xela_data(skin_data, timestamps, nominal_freq, False, skin_force_data)
+    joint_angles, _ = read_allegro_joint_data(allegro_data, timestamps, nominal_freq, False)
+    sensor_positions = joint_angles_to_poses(xela_kinematic_chain, joint_angles)
+
+    mask = xela_array[:, ..., 1] != 0
+    if params["subtract_baseline"] and xela_baseline is not None:
+        baseline = einops.repeat(xela_baseline, "k c -> b k c", b=xela_array.shape[0])
+        xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
+
+    xela_array = xela_array[..., 1:]
+    if params["use_spatial_coords"]:
+        xela_array = np.concatenate([xela_array, sensor_positions], axis=-1)
+
+    _, gt_force_data = read_force_data(
+        force_data, force_timestamps, max_abs_forceXYZ=[1.0, 1.0, 1.0], nominal_freq=force_nominal_freq
+    )
+
+    # Clip the length of the data to match the pose data
+    # max_force_length = min(len(gt_force_data), len(xela_array) // 10)
+    # xela_array = xela_array[: max_force_length * subsampling_ratio]
+    # timestamps = timestamps[: max_force_length * subsampling_ratio]
+    max_force_length = min(len(gt_force_data), len(xela_array))
+    xela_array = xela_array[:max_force_length]
+    if xela_force_array is not None:
+        xela_force_array = xela_force_array[:max_force_length]
+    timestamps = timestamps[:max_force_length]
+    gt_force_data = gt_force_data[:max_force_length, 1:]
+    num_frames = max_force_length
+
+    return xela_array, xela_force_array, gt_force_data, timestamps, num_frames
 
 
 class ForceDataset(data.Dataset):
@@ -43,6 +283,7 @@ class ForceDataset(data.Dataset):
             config.features = {}
         if config.features.get("use_spatial_coords") is None:
             config.features.use_spatial_coords = False
+        _ensure_force_cache_config(config)
 
         self.datapath_list = data_list
         self.window_time = config.window_time
@@ -59,6 +300,8 @@ class ForceDataset(data.Dataset):
         self.max_sensors_per_taxel = 30
         self.num_frames_per_window = int(round(self.window_time * self.nominal_freq))
         self.target_frames_per_window = int(round(self.window_time * self.force_nominal_freq))
+        self.cache_config = _force_cache_config(config)
+        self.cache_params = _force_params_from_config(config)
 
         self.xela_baseline = None
         if self.baseline_signal_path is not None:
@@ -74,9 +317,9 @@ class ForceDataset(data.Dataset):
         timestamps = []
         num_frames = []
 
-        for i, data_path in enumerate(self.datapath_list):
+        for i, data in enumerate(self.load_episode_data(urdf_path)):
+            data_path = self.datapath_list[i]
             print(f"{i}, Loading data from {data_path}")
-            data = self.load_data(data_path)
             xela_array.append(data[0])
             xela_force_array.append(data[1])
             force_data.append(data[2])
@@ -100,113 +343,26 @@ class ForceDataset(data.Dataset):
         if self.target_normalize:
             self.target_transform = transforms.Lambda(lambda x: (x - self.target_mean) / self.target_std)
 
+    def load_episode_data(self, urdf_path):
+        if self.cache_config["enabled"]:
+            args = [
+                (str(data_path), urdf_path, self.baseline_signal_path, self.cache_params, self.cache_config)
+                for data_path in self.datapath_list
+            ]
+            if self.cache_config["num_workers"] > 0 and len(args) > 1:
+                with ProcessPoolExecutor(max_workers=self.cache_config["num_workers"]) as pool:
+                    return [_force_arrays_to_tuple(arrays) for arrays in pool.map(_load_cached_force_episode, args)]
+            return [_force_arrays_to_tuple(_load_cached_force_episode(arg)) for arg in args]
+
+        return [self.load_data(data_path) for data_path in self.datapath_list]
+
     def load_data(self, data_path):
-        skin_pkl_path = data_path / "xela/data.pkl"
-        skin_pkl_force_path = data_path / "xela/forces.pkl"
-        allegro_pkl_path = data_path / "allegro/data.pkl"
-        force_pkl_path = data_path / "data.pkl"
-
-        assert skin_pkl_path.exists(), f"Xela skin data not found at {skin_pkl_path}"
-        assert force_pkl_path.exists(), f"Force data not found at {force_pkl_path}"
-
-        with open(skin_pkl_path, "rb") as f:
-            skin_data = pickle.load(f)
-        skin_data = np.asarray(skin_data)
-
-        with open(skin_pkl_force_path, "rb") as f:
-            skin_force_data = pickle.load(f)
-        skin_force_data = np.asarray(skin_force_data)
-
-        if not allegro_pkl_path.exists():
-            # allegro is kept flat. Setting a fix allegro joint state
-            allegro_joint_state = np.array(
-                [
-                    [
-                        3.76105724e-01,
-                        -2.54875702e-01,
-                        -2.64896910e-01,
-                        -1.27969950e-01,
-                        5.00173611e-02,
-                        -2.60374064e-01,
-                        -2.85205378e-01,
-                        -2.55141751e-01,
-                        -1.27792584e-01,
-                        -2.41839262e-01,
-                        -2.57092783e-01,
-                        4.34902728e-01,
-                        2.60994847e-01,
-                        -3.90028996e-01,
-                        1.50069820e00,
-                        3.44889215e-01,
-                        -8.17324002e-04,
-                        -1.05262663e-03,
-                        4.13282548e-03,
-                        -8.95508305e-03,
-                        6.96885109e-02,
-                        1.30731142e-03,
-                        2.55328768e-03,
-                        5.62274925e-02,
-                        5.00000000e-01,
-                        4.12439429e-03,
-                        -1.48203024e-02,
-                        -5.00000000e-01,
-                        5.62450390e-04,
-                        2.74799718e-07,
-                        -1.74512554e-02,
-                        -1.01071438e-03,
-                    ]
-                ]
-            )
-            allegro_data = np.repeat(allegro_joint_state, len(skin_data), axis=0)
-            allegro_data = np.hstack((skin_data[:, 0, 0].reshape(-1, 1), allegro_data))
-        else:
-            with open(allegro_pkl_path, "rb") as f:
-                allegro_data = pickle.load(f)
-            allegro_data = np.array(allegro_data["joint_states"])
-
-        with open(force_pkl_path, "rb") as f:
-            force_data = pickle.load(f)
-        force_data = np.array(force_data["force"])
-
-        subsampling_ratio = self.nominal_freq // self.force_nominal_freq
-
-        timestamps, num_frames = compute_interp_timestamps(
-            [skin_data[:, 0, 0], allegro_data[:, 0], force_data[:, 0]], self.nominal_freq
+        return _compute_force_episode(
+            data_path=data_path,
+            xela_baseline=self.xela_baseline,
+            xela_kinematic_chain=self.xela_kinematic_chain,
+            params=self.cache_params,
         )
-
-        # force_timestamps = timestamps[::subsampling_ratio]
-        force_timestamps = timestamps
-
-        xela_array, xela_force_array = read_xela_data(skin_data, timestamps, self.nominal_freq, False, skin_force_data)
-        joint_angles, _ = read_allegro_joint_data(allegro_data, timestamps, self.nominal_freq, False)
-        sensor_positions = joint_angles_to_poses(self.xela_kinematic_chain, joint_angles)
-
-        mask = xela_array[:, ..., 1] != 0
-        if self.subtract_baseline and self.xela_baseline is not None:
-            baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=xela_array.shape[0])
-            xela_array[mask, 1:] = xela_array[mask, 1:] - baseline[mask, :]
-
-        xela_array = xela_array[..., 1:]
-        if self.use_spatial_coords:
-            xela_array = np.concatenate([xela_array, sensor_positions], axis=-1)
-
-        _, gt_force_data = read_force_data(
-            force_data, force_timestamps, max_abs_forceXYZ=[1.0, 1.0, 1.0], nominal_freq=self.force_nominal_freq
-        )
-
-        # Clip the length of the data to match the pose data
-        # max_force_length = min(len(gt_force_data), len(xela_array) // 10)
-        # xela_array = xela_array[: max_force_length * subsampling_ratio]
-        # timestamps = timestamps[: max_force_length * subsampling_ratio]
-        max_force_length = min(len(gt_force_data), len(xela_array))
-        xela_array = xela_array[:max_force_length]
-        if xela_force_array is not None:
-            xela_force_array = xela_force_array[:max_force_length]
-        timestamps = timestamps[:max_force_length]
-        gt_force_data = gt_force_data[:max_force_length, 1:]
-        num_frames = max_force_length
-
-        return xela_array, xela_force_array, gt_force_data, timestamps, num_frames
 
     def compute_target_stats(self, force_data):
         force_data = np.concatenate(force_data, axis=0)

@@ -4,6 +4,13 @@ max_train_data: 20000
 
 sensor: xela
 
+cache:
+  enabled: true
+  root: ${paths.work_dir}/.cache/xela_artifacts
+  force_recompute: false
+  log_hits: true
+  num_workers: 0
+
 dataset:
   _target_: tactile_ssl.data.xela_pose_estimation.RelativePoseDataset.create_train_val_test_from_files
   data_path: ${paths.data_root}/downstream_tasks/relative_pose_estimation

@@ -1,5 +1,6 @@
 import time
 import os
+from concurrent.futures import ProcessPoolExecutor
 from typing import List, Optional, Union, Tuple
 from omegaconf import DictConfig, OmegaConf
 import matplotlib.pyplot as plt
@@ -180,9 +181,17 @@ class XelaJoystickDataset(data.Dataset):
             file_paths = [file_paths]
         input_list = []
         target_list = []
-        for file_path in file_paths:
-            curr_path = os.path.join(data_root, file_path)
-            curr_in, curr_tgt = get_input_target_lists(curr_path)
+
+        cache_cfg = config.get("cache", {})
+        io_num_workers = int(cache_cfg.get("num_workers", 0)) if cache_cfg is not None else 0
+        h5_paths = [os.path.join(data_root, file_path) for file_path in file_paths]
+        if io_num_workers > 0 and len(h5_paths) > 1:
+            with ProcessPoolExecutor(max_workers=io_num_workers) as pool:
+                h5_data = list(pool.map(get_input_target_lists, h5_paths))
+        else:
+            h5_data = [get_input_target_lists(curr_path) for curr_path in h5_paths]
+
+        for curr_in, curr_tgt in h5_data:
             input_list.extend(curr_in)
             target_list.extend(curr_tgt)
 
