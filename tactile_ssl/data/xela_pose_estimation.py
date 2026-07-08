@@ -23,7 +23,9 @@ from tactile_ssl.data.xela.utils import (
     xela_flat_to_grid,
 )
 from tactile_ssl.data.cache import ArtifactCache, CacheSpec
-from tactile_ssl.data.cache.fingerprint import file_fingerprint
+from tactile_ssl.data.cache.fingerprint import file_fingerprint, stable_hash
+from tactile_ssl.data.xela.preprocessing import compute_indexed_window_sensor_graphs
+from tactile_ssl.graph.builders import build_sensor_graph
 
 from torchvision import transforms
 
@@ -69,6 +71,25 @@ def _relative_pose_params_from_config(config: DictConfig) -> dict:
     }
 
 
+def _graph_params_from_config(config: DictConfig) -> Optional[dict]:
+    graph_cfg = config.get("graph", None)
+    if graph_cfg is None or not bool(graph_cfg.get("enabled", False)):
+        return None
+    graph_type = str(graph_cfg.get("type", "physical"))
+    if graph_type == "distance":
+        graph_type = "distance_threshold"
+    graph_params = dict(graph_cfg.get("params", {}))
+    if graph_type == "physical" and "bridge_k" not in graph_params:
+        graph_params["bridge_k"] = int(graph_cfg.get("bridge_k", 4))
+    return {
+        "graph_type": graph_type,
+        "graph_params": graph_params,
+        "edge_attr_mode": str(graph_cfg.get("edge_attr_mode", "distance")),
+        "topology_mode": str(graph_cfg.get("topology_mode", "per_window")),
+        "window_frames": graph_cfg.get("window_frames", None),
+    }
+
+
 def _relative_pose_episode_fingerprints(data_path: Path, baseline_signal_path: Optional[str], urdf_path: str) -> dict:
     return {
         "xela": file_fingerprint(str(data_path / "xela/data.pkl")),
@@ -92,7 +113,7 @@ def _load_relative_pose_episode_uncached(
             baseline_signal = np.asarray(pickle.load(f))
         xela_baseline = np.mean(baseline_signal[:, :, 1:], axis=0)
     xela_kinematic_chain = pk.build_chain_from_urdf(open(urdf_path).read())
-    xela_array, relative_pose_data, relative_pose_planar, timestamps, num_frames = _compute_relative_pose_episode(
+    xela_array, relative_pose_data, relative_pose_planar, timestamps, sensor_positions, num_frames = _compute_relative_pose_episode(
         data_path=data_path,
         xela_baseline=xela_baseline,
         xela_kinematic_chain=xela_kinematic_chain,
@@ -103,6 +124,7 @@ def _load_relative_pose_episode_uncached(
         "relative_pose_data": relative_pose_data,
         "relative_pose_planar": relative_pose_planar,
         "timestamps": timestamps,
+        "sensor_positions": sensor_positions,
         "num_frames": np.asarray(num_frames, dtype=np.int64),
     }
 
@@ -148,12 +170,13 @@ def _load_cached_relative_pose_episode(args: tuple[str, str, Optional[str], dict
 
 def _relative_pose_arrays_to_tuple(
     arrays: dict[str, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     return (
         arrays["xela_array"],
         arrays["relative_pose_data"],
         arrays["relative_pose_planar"],
         arrays["timestamps"],
+        arrays["sensor_positions"],
         int(np.asarray(arrays["num_frames"]).item()),
     )
 
@@ -234,12 +257,13 @@ def _compute_relative_pose_episode(data_path: Path, xela_baseline, xela_kinemati
     # Clip the length of the data to match the pose data
     max_pose_length = min(len(pose_data_smooth), len(xela_array) // 10)
     xela_array = xela_array[: max_pose_length * subsampling_ratio]
+    sensor_positions = sensor_positions[: max_pose_length * subsampling_ratio]
     timestamps = timestamps[: max_pose_length * subsampling_ratio]
     pose_data_smooth = pose_data_smooth[:max_pose_length]
     relative_pose_data = relative_pose_data[:max_pose_length]
     num_frames = max_pose_length * subsampling_ratio
 
-    return xela_array, relative_pose_data, pose_data_smooth, timestamps, num_frames
+    return xela_array, relative_pose_data, pose_data_smooth, timestamps, sensor_positions, num_frames
 
 
 class RelativePoseDataset(data.Dataset):
@@ -275,6 +299,7 @@ class RelativePoseDataset(data.Dataset):
         self.discretize = config.discretize
         self.cache_config = _relative_pose_cache_config(config)
         self.cache_params = _relative_pose_params_from_config(config)
+        self.graph_params = _graph_params_from_config(config)
 
         self.xela_baseline = None
         if self.baseline_signal_path is not None:
@@ -288,6 +313,7 @@ class RelativePoseDataset(data.Dataset):
         relative_pose_data = []
         relative_pose_planar = []
         timestamps = []
+        sensor_positions = []
         num_frames = []
         for i, data in enumerate(self.load_episode_data(urdf_path)):
             data_path = self.datapath_list[i]
@@ -296,10 +322,12 @@ class RelativePoseDataset(data.Dataset):
             relative_pose_data.append(data[1])
             relative_pose_planar.append(data[2])
             timestamps.append(data[3])
-            num_frames.append(data[4])
+            sensor_positions.append(data[4])
+            num_frames.append(data[5])
 
         self.timestamps = np.concatenate(timestamps)
         self.xela_array = np.concatenate(xela_array, axis=0)
+        self.sensor_positions = np.concatenate(sensor_positions, axis=0)
         self.relative_pose_data = np.concatenate(relative_pose_data, axis=0)
         relative_pose_planar_ = np.concatenate(relative_pose_planar, axis=0)
 
@@ -326,6 +354,7 @@ class RelativePoseDataset(data.Dataset):
             f"Timestamps: {self.timestamps.shape}, Xela array: {self.xela_array.shape}, Relative pose: {self.relative_pose_planar.shape}"
         )
         self.idx_to_episode_idx = self.get_idx_to_episode_idx(relative_pose_planar)
+        self.window_sensor_graphs = self.load_window_sensor_graphs()
 
         if self.target_normalize:
             self.target_transform = transforms.Lambda(lambda x: (x - self.target_mean) / self.target_std)
@@ -372,6 +401,56 @@ class RelativePoseDataset(data.Dataset):
             xela_kinematic_chain=self.xela_kinematic_chain,
             params=self.cache_params,
         )
+
+    def load_window_sensor_graphs(self):
+        if self.graph_params is None:
+            return None
+        graph_window_frames = int(self.graph_params["window_frames"] or self.num_frames_per_window)
+        if self.num_frames_per_window % graph_window_frames != 0:
+            raise ValueError(
+                f"Graph window_frames={graph_window_frames} must divide "
+                f"num_frames_per_window={self.num_frames_per_window}"
+            )
+        graph_chunks_per_sample = self.num_frames_per_window // graph_window_frames
+        sample_window_starts = np.asarray(
+            [item["input_episode_offset"] + item["input_offset"] for item in self.idx_to_episode_idx],
+            dtype=np.int64,
+        )
+        window_starts = (
+            sample_window_starts[:, None] + np.arange(graph_chunks_per_sample, dtype=np.int64)[None, :] * graph_window_frames
+        ).reshape(-1)
+        cache = ArtifactCache(
+            root=self.cache_config["root"],
+            enabled=self.cache_config["enabled"],
+            force_recompute=self.cache_config["force_recompute"],
+            log_hits=self.cache_config["log_hits"],
+        )
+        spec = CacheSpec(
+            artifact="relative_pose_window_sensor_graphs",
+            schema_version=1,
+            semantic_params={
+                "data_paths": [str(path) for path in self.datapath_list],
+                "num_frames_per_window": int(graph_window_frames),
+                "graph_chunks_per_sample": int(graph_chunks_per_sample),
+                "window_starts_hash": stable_hash(window_starts.tolist()),
+                **self.graph_params,
+            },
+            producer_functions=(compute_indexed_window_sensor_graphs, build_sensor_graph),
+        )
+        artifact, _ = cache.get_or_compute(
+            spec,
+            lambda: compute_indexed_window_sensor_graphs(
+                sensor_positions=self.sensor_positions,
+                window_starts=window_starts,
+                num_frames_per_window=graph_window_frames,
+                graph_type=self.graph_params["graph_type"],
+                graph_params=self.graph_params["graph_params"],
+                edge_attr_mode=self.graph_params["edge_attr_mode"],
+                topology_mode=self.graph_params["topology_mode"],
+            ),
+        )
+        artifact["graph_chunks_per_sample"] = np.asarray(graph_chunks_per_sample, dtype=np.int64)
+        return artifact
 
     def compute_target_stats(self, relative_pose_planar):
         relative_pose_planar = np.concatenate(relative_pose_planar, axis=0)
@@ -510,6 +589,15 @@ class RelativePoseDataset(data.Dataset):
 
         sample["target_mean"] = torch.tensor(self.target_mean).float()
         sample["target_std"] = torch.tensor(self.target_std).float()
+        if self.window_sensor_graphs is not None:
+            graph_chunks = int(np.asarray(self.window_sensor_graphs["graph_chunks_per_sample"]).item())
+            graph_start = idx * graph_chunks
+            graph_end = graph_start + graph_chunks
+            sample["graph"] = {
+                "edge_index": torch.from_numpy(self.window_sensor_graphs["graph_edge_index"][graph_start:graph_end]).long(),
+                "edge_attr": torch.from_numpy(self.window_sensor_graphs["graph_edge_attr"][graph_start:graph_end]).float(),
+                "edge_count": torch.from_numpy(self.window_sensor_graphs["graph_edge_count"][graph_start:graph_end]).long(),
+            }
 
         return sample
 

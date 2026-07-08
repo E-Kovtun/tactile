@@ -38,6 +38,16 @@ class XelaObjectSLModule(SLModule):
         self.val_pred, self.val_gt = [], []
         self.test_pred, self.test_gt = [], []
 
+    def _graph_to_device(self, graph_info: Optional[Dict[str, torch.Tensor]], device: torch.device):
+        if graph_info is None:
+            return None
+        return {key: value.to(device) if hasattr(value, "to") else value for key, value in graph_info.items()}
+
+    def _forward_encoder(self, sensor_data, graph_info=None):
+        if graph_info is not None and getattr(self.model_encoder, "supports_graph_info", False):
+            return self.model_encoder.forward_features(sensor_data, graph_info=graph_info)
+        return self.model_encoder.forward_features(sensor_data)
+
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
         if trainer_instance is not None and trainer_instance.should_log:
             trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"].item(), step)
@@ -47,11 +57,13 @@ class XelaObjectSLModule(SLModule):
 
     def forward(self, batch, batch_idx):
         sensor_data = batch["sensor"]
+        graph_info = self._graph_to_device(batch.get("graph"), sensor_data.device)
+        encoder_output = self._forward_encoder(sensor_data, graph_info=graph_info)
         if self.model_encoder.num_register_tokens > 0:
-            cls_embedding = self.model_encoder.forward_features(sensor_data)["x_norm_regtokens"].squeeze(1)
+            cls_embedding = encoder_output["x_norm_regtokens"].squeeze(1)
         else:
             assert self.model_encoder.num_register_tokens == 0
-            cls_embedding = torch.mean(self.model_encoder.forward_features(sensor_data)["x_norm_patchtokens"], dim=1)
+            cls_embedding = torch.mean(encoder_output["x_norm_patchtokens"], dim=1)
         if self.train_encoder:
             pred_logits = self.model_task(cls_embedding)
         else:

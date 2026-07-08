@@ -18,6 +18,7 @@ from tactile_ssl.data.xela.utils import (
     read_allegro_joint_data,
     read_xela_data,
 )
+from tactile_ssl.graph.builders import build_sensor_graph
 
 
 def compute_baseline_mean(baseline_signal_path: str):
@@ -167,6 +168,102 @@ def compute_cached_xela_normalization(xela_datasets: list, per_sensor: bool = Fa
         ),
     )
     return artifact["mean"], artifact["std"]
+
+
+def compute_window_data_idxs(num_frames: int, num_frames_per_window: int, shift_per_window: int) -> np.ndarray:
+    max_length = num_frames - (num_frames % num_frames_per_window)
+    max_length = max_length - num_frames_per_window
+    return np.arange(0, max_length, shift_per_window, dtype=np.int64)
+
+
+def _directed_edge_index_and_attr(edge_index: np.ndarray, edge_weight: np.ndarray):
+    directed_edge_index = np.concatenate([edge_index, edge_index[::-1]], axis=1).astype(np.int64)
+    directed_edge_attr = np.concatenate([edge_weight, edge_weight], axis=0).astype(np.float32)[:, None]
+    return directed_edge_index, directed_edge_attr
+
+
+def _edge_attr_for_positions(edge_index: np.ndarray, positions: np.ndarray) -> np.ndarray:
+    edge_weight = np.linalg.norm(
+        positions[edge_index[0]] - positions[edge_index[1]],
+        axis=-1,
+    ).astype(np.float32)
+    return edge_weight[:, None]
+
+
+def compute_window_sensor_graphs(
+    sensor_positions: np.ndarray,
+    window_time: float,
+    interpolating_freq: int,
+    window_overlap: float,
+    graph_type: str,
+    graph_params: dict,
+    edge_attr_mode: str,
+    topology_mode: str = "per_window",
+):
+    num_frames_per_window = int(round(window_time * interpolating_freq))
+    shift_per_window = max(1, int(round(num_frames_per_window * (1.0 - window_overlap))))
+    data_idxs = compute_window_data_idxs(len(sensor_positions), num_frames_per_window, shift_per_window)
+    return compute_indexed_window_sensor_graphs(
+        sensor_positions=sensor_positions,
+        window_starts=data_idxs,
+        num_frames_per_window=num_frames_per_window,
+        graph_type=graph_type,
+        graph_params=graph_params,
+        edge_attr_mode=edge_attr_mode,
+        topology_mode=topology_mode,
+    )
+
+
+def compute_indexed_window_sensor_graphs(
+    sensor_positions: np.ndarray,
+    window_starts: np.ndarray,
+    num_frames_per_window: int,
+    graph_type: str,
+    graph_params: dict,
+    edge_attr_mode: str,
+    topology_mode: str = "per_window",
+):
+    data_idxs = np.asarray(window_starts, dtype=np.int64)
+    edge_indices = []
+    edge_attrs = []
+    edge_counts = []
+    static_edge_index = None
+    if topology_mode in {"static", "static_edges", "constant"}:
+        if graph_type != "physical":
+            raise ValueError(f"topology_mode={topology_mode!r} is only supported for graph_type='physical'")
+        if len(data_idxs) > 0:
+            first_index = int(data_idxs[0])
+            first_positions = sensor_positions[first_index : first_index + num_frames_per_window].mean(axis=0)
+            first_graph = build_sensor_graph(first_positions, graph_type=graph_type, **graph_params)
+            static_edge_index, _ = _directed_edge_index_and_attr(first_graph.edge_index, first_graph.edge_weight)
+
+    for index in data_idxs:
+        window_positions = sensor_positions[index : index + num_frames_per_window].mean(axis=0)
+        if static_edge_index is None:
+            graph = build_sensor_graph(window_positions, graph_type=graph_type, **graph_params)
+            directed_edge_index, directed_edge_attr = _directed_edge_index_and_attr(graph.edge_index, graph.edge_weight)
+        else:
+            directed_edge_index = static_edge_index
+            directed_edge_attr = _edge_attr_for_positions(directed_edge_index, window_positions)
+        edge_indices.append(directed_edge_index)
+        edge_attrs.append(directed_edge_attr)
+        edge_counts.append(directed_edge_index.shape[1])
+
+    max_edges = max(edge_counts, default=0)
+    graph_edge_index = np.zeros((len(data_idxs), 2, max_edges), dtype=np.int64)
+    graph_edge_attr = np.zeros((len(data_idxs), max_edges, 1), dtype=np.float32)
+    graph_edge_count = np.asarray(edge_counts, dtype=np.int64)
+    for i, edge_count in enumerate(edge_counts):
+        graph_edge_index[i, :, :edge_count] = edge_indices[i]
+        if edge_attr_mode == "distance":
+            graph_edge_attr[i, :edge_count] = edge_attrs[i]
+
+    return {
+        "graph_edge_index": graph_edge_index,
+        "graph_edge_attr": graph_edge_attr,
+        "graph_edge_count": graph_edge_count,
+        "graph_window_start": data_idxs,
+    }
 
 
 def _load_raw_sequence(data_path: str):
@@ -353,7 +450,7 @@ def load_cached_xela_sequence(
         lambda: compute_sensor_positions(joint_poses_artifact["joint_poses"]),
     )
 
-    return {
+    result = {
         "timestamps": xela_artifact["timestamps"],
         "xela_array": xela_artifact["xela_array"],
         "joint_angles": allegro_artifact["joint_angles"],
@@ -369,3 +466,45 @@ def load_cached_xela_sequence(
         "preprocessing_contract": preprocessing_contract,
         "dataset_lock_hash": stable_hash(dataset_lock),
     }
+
+    graph_cfg = config.get("graph", None)
+    if graph_cfg is not None and bool(graph_cfg.get("enabled", False)):
+        graph_type = str(graph_cfg.get("type", "physical"))
+        if graph_type == "distance":
+            graph_type = "distance_threshold"
+        edge_attr_mode = str(graph_cfg.get("edge_attr_mode", "distance"))
+        graph_params = dict(graph_cfg.get("params", {}))
+        if graph_type == "physical" and "bridge_k" not in graph_params:
+            graph_params["bridge_k"] = int(graph_cfg.get("bridge_k", 4))
+        graph_spec = CacheSpec(
+            artifact="window_sensor_graphs",
+            schema_version=1,
+            semantic_params={
+                "window_time": float(config.window_time),
+                "window_overlap": float(config.window_overlap),
+                "interpolating_freq": int(config.interpolating_freq),
+                "graph_type": graph_type,
+                "graph_params": graph_params,
+                "edge_attr_mode": edge_attr_mode,
+                "topology_mode": str(graph_cfg.get("topology_mode", "per_window")),
+            },
+            producer_functions=(compute_window_sensor_graphs, build_sensor_graph),
+            upstream_keys={"sensor_positions": sensor_positions_key},
+        )
+        graph_artifact, graph_key = cache.get_or_compute(
+            graph_spec,
+            lambda: compute_window_sensor_graphs(
+                sensor_positions_artifact["sensor_positions"],
+                window_time=float(config.window_time),
+                interpolating_freq=int(config.interpolating_freq),
+                window_overlap=float(config.window_overlap),
+                graph_type=graph_type,
+                graph_params=graph_params,
+                edge_attr_mode=edge_attr_mode,
+                topology_mode=str(graph_cfg.get("topology_mode", "per_window")),
+            ),
+        )
+        result["window_sensor_graphs"] = graph_artifact
+        result["artifact_keys"]["window_sensor_graphs"] = graph_key
+
+    return result

@@ -26,6 +26,48 @@ run_name: ${now:%Y.%m.%d}_${now:%H-%M}
 data:
   features:
     use_spatial_coords: true
+  dataset_list:
+    - type: teleop
+      sequence_list:
+        - corn
+        - rubikscube
+        - metalcup
+        - cup
+        - ball
+        - drill
+        - mustard
+        - lego
+        - pringle
+        - legopool
+        - watermelon
+        - popcorn
+        - loofah
+        - slipper
+      train_dataset_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+      val_dataset_ids: [9]
+      dataset:
+        _target_: tactile_ssl.data.xela_tactile.XelaGraphSSLDataset
+        config:
+          window_time: ${data.window_time}
+          window_overlap: ${data.window_overlap}
+          interpolating_freq: ${data.interpolating_freq}
+          subtract_baseline: true
+          smooth_data: false
+          bias_noise_std: 0
+          bias_range: 0
+          cache: ${data.cache}
+          preprocessing: ${data.preprocessing}
+          features: ${data.features}
+          graph:
+            enabled: true
+            type: physical
+            topology_mode: static_edges
+            edge_attr_mode: distance
+            bridge_k: 4
+        data_path: ${paths.data_root}/xela/pretraining/extracted
+        baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
+        xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+        load_images: false
 
 trainer:
   max_epochs: 500

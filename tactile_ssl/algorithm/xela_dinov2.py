@@ -28,6 +28,16 @@ class XelaDINOv2Module(DINOv2Module):
         # This is valid only when the baseline is subtracted in the xela dataset
         self.ibot_mask_ratio = ibot_mask_ratio
 
+    def _graph_to_device(self, graph_info: Optional[Dict[str, torch.Tensor]], device: torch.device):
+        if graph_info is None:
+            return None
+        return {key: value.to(device) if hasattr(value, "to") else value for key, value in graph_info.items()}
+
+    def _forward_backbone(self, backbone, x, graph_info=None, **kwargs):
+        if graph_info is not None and getattr(backbone, "supports_graph_info", False):
+            return backbone.forward_features(x, graph_info=graph_info, **kwargs)
+        return backbone.forward_features(x, **kwargs)
+
     def on_validation_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.log_on_batch_end(outputs, stage="val", trainer_instance=trainer_instance)
         # Plot online probe predictions
@@ -123,6 +133,7 @@ class XelaDINOv2Module(DINOv2Module):
         global_masks: torch.Tensor,
         local_masks: torch.Tensor,
         ibot_masks: torch.Tensor,
+        graph_info: Optional[Dict[str, torch.Tensor]] = None,
     ):
         assert global_masks is not None and local_masks is not None, "Masks are required for DINOModule during training"
 
@@ -131,11 +142,20 @@ class XelaDINOv2Module(DINOv2Module):
         num_ibot_tokens = len(ibot_mask_indices)
 
         # TODO: @Akash Sharma - Raise to make sure context encoder implements taking masks as an argument
-        student_global_dict = self.student_encoder_dict["backbone"].forward_features(
-            xs, masks=global_masks, mask_type="tubelet", masktoken_masks=ibot_masks
+        student_global_dict = self._forward_backbone(
+            self.student_encoder_dict["backbone"],
+            xs,
+            graph_info=graph_info,
+            masks=global_masks,
+            mask_type="tubelet",
+            masktoken_masks=ibot_masks,
         )
-        student_local_dict = self.student_encoder_dict["backbone"].forward_features(
-            xs, masks=local_masks, mask_type="tubelet"
+        student_local_dict = self._forward_backbone(
+            self.student_encoder_dict["backbone"],
+            xs,
+            graph_info=graph_info,
+            masks=local_masks,
+            mask_type="tubelet",
         )
 
         student_global_cls_tokens = student_global_dict["x_norm_regtokens"][:, 0]
@@ -181,8 +201,12 @@ class XelaDINOv2Module(DINOv2Module):
         )
 
         with torch.no_grad():
-            teacher_global_dict = self.teacher_encoder_dict["backbone"].forward_features(
-                xs, masks=global_masks, mask_type="tubelet"
+            teacher_global_dict = self._forward_backbone(
+                self.teacher_encoder_dict["backbone"],
+                xs,
+                graph_info=graph_info,
+                masks=global_masks,
+                mask_type="tubelet",
             )
             teacher_global_cls_tokens = teacher_global_dict["x_norm_regtokens"][:, 0]
 
@@ -272,9 +296,10 @@ class XelaDINOv2Module(DINOv2Module):
         self.step = self.step + 1
         self.generator.manual_seed(self.step)
         x = batch["sensor"]
+        graph_info = self._graph_to_device(batch.get("graph"), x.device)
         global_masks, local_masks, ibot_masks = self.sample_masks(x)
 
-        loss = self.forward(x, global_masks, local_masks, ibot_masks)
+        loss = self.forward(x, global_masks, local_masks, ibot_masks, graph_info=graph_info)
 
         output = {
             "ssl_loss": loss.item(),
@@ -285,7 +310,11 @@ class XelaDINOv2Module(DINOv2Module):
         cls_embedding = None
         if len(self.online_probes) > 0:
             with torch.no_grad():
-                teacher_dict = self.teacher_encoder_dict["backbone"].forward_features(x)
+                teacher_dict = self._forward_backbone(
+                    self.teacher_encoder_dict["backbone"],
+                    x,
+                    graph_info=graph_info,
+                )
                 cls_embedding = teacher_dict["x_norm_regtokens"].squeeze(1)
                 embedding = teacher_dict["x_norm_patchtokens"]
                 embedding = F.layer_norm(embedding, (embedding.size(-1),))

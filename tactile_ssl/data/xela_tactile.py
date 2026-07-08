@@ -107,6 +107,7 @@ class XelaSSLDataset(data.Dataset):
         self.joint_poses = cached["joint_poses"]
         self.sensor_positions = cached["sensor_positions"]
         self.artifact_keys = cached["artifact_keys"]
+        self.window_sensor_graphs = cached.get("window_sensor_graphs")
 
         if VIS_POSES:
             import matplotlib.pyplot as plt
@@ -139,6 +140,10 @@ class XelaSSLDataset(data.Dataset):
         max_length = max_length - self.num_frames_per_window
 
         self.data_idxs = np.arange(0, max_length, self.shift_per_window)
+        if self.window_sensor_graphs is not None:
+            graph_window_start = self.window_sensor_graphs["graph_window_start"]
+            if graph_window_start.shape != self.data_idxs.shape or not np.array_equal(graph_window_start, self.data_idxs):
+                raise ValueError("Cached graph windows do not match dataset windows")
 
         if self.load_images:
             self.color_image_path = Path(self.data_path + "/top_camera/color")
@@ -189,6 +194,7 @@ class XelaSSLDataset(data.Dataset):
 
     def __getitem__(self, idx):
         sample_dict = {}
+        sample_idx = idx
         index = self.data_idxs[idx]
         timestamp = self.timestamps[index : index + self.num_frames_per_window]
 
@@ -215,9 +221,34 @@ class XelaSSLDataset(data.Dataset):
         sample_dict.update({"sensor": sensor_data})
         sample_dict.update({"joint_angles": joint_angles})
         sample_dict.update({"sensor_poses": sensor_poses})
+        if self.window_sensor_graphs is not None:
+            edge_count = int(self.window_sensor_graphs["graph_edge_count"][sample_idx])
+            graph = {
+                "edge_index": torch.from_numpy(self.window_sensor_graphs["graph_edge_index"][sample_idx]).long(),
+                "edge_attr": torch.from_numpy(self.window_sensor_graphs["graph_edge_attr"][sample_idx]).float(),
+                "edge_count": torch.tensor(edge_count, dtype=torch.long),
+            }
+            sample_dict.update({"graph": graph})
         if self.object_label is not None:
             sample_dict.update({"object_classification": torch.tensor(self.object_label)})
         return sample_dict
+
+
+class XelaGraphSSLDataset(XelaSSLDataset):
+    def __init__(self, config: DictConfig, *args, **kwargs):
+        if config.get("graph") is None:
+            config.graph = {}
+        if config.graph.get("enabled") is None:
+            config.graph.enabled = True
+        if config.graph.get("type") is None:
+            config.graph.type = "physical"
+        if config.graph.get("topology_mode") is None:
+            config.graph.topology_mode = "per_window"
+        if config.graph.get("edge_attr_mode") is None:
+            config.graph.edge_attr_mode = "distance"
+        if config.graph.get("bridge_k") is None:
+            config.graph.bridge_k = 4
+        super().__init__(config=config, *args, **kwargs)
 
 
 if __name__ == "__main__":

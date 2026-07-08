@@ -18,8 +18,20 @@ val_data_budget: 1.0
 data:
   dataset:
     config:
+      cache:
+        enabled: true
+        root: ${paths.work_dir}/.cache/xela_artifacts
+        force_recompute: false
+        log_hits: true
       features:
         use_spatial_coords: true
+      graph:
+        enabled: true
+        type: physical
+        topology_mode: static_edges
+        edge_attr_mode: distance
+        window_frames: 10
+        bridge_k: 4
 
 task:
   checkpoint_encoder: ${checkpoint_encoder}

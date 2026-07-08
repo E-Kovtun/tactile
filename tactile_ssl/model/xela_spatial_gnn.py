@@ -164,6 +164,38 @@ def build_physical_pyg_graph_batch(
     return edge_index, edge_attr
 
 
+def build_cached_pyg_graph_batch(
+    graph_info: dict[str, torch.Tensor],
+    num_nodes: int,
+    device: torch.device,
+    edge_mode: Literal["distance", "topology"] = "distance",
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    edge_index_batch = graph_info["edge_index"].to(device=device, dtype=torch.long)
+    edge_count_batch = graph_info["edge_count"].to(device=device, dtype=torch.long)
+    edge_attr_batch = graph_info.get("edge_attr")
+    if edge_attr_batch is not None:
+        edge_attr_batch = edge_attr_batch.to(device=device)
+
+    edge_indices = []
+    edge_attrs = []
+    for batch_id in range(edge_index_batch.shape[0]):
+        edge_count = int(edge_count_batch[batch_id].item())
+        edge_index = edge_index_batch[batch_id, :, :edge_count] + batch_id * num_nodes
+        edge_indices.append(edge_index)
+        if edge_mode == "distance" and edge_attr_batch is not None:
+            edge_attrs.append(edge_attr_batch[batch_id, :edge_count])
+
+    if edge_indices:
+        edge_index = torch.cat(edge_indices, dim=1)
+    else:
+        edge_index = torch.zeros((2, 0), dtype=torch.long, device=device)
+    if edge_mode == "distance":
+        edge_attr = torch.cat(edge_attrs, dim=0) if edge_attrs else torch.zeros((0, 1), device=device)
+    else:
+        edge_attr = None
+    return edge_index, edge_attr
+
+
 class XelaSpatialGNNTransformer(SignalTransformer):
     def __init__(
         self,
@@ -218,6 +250,7 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         self.graph_type = graph_type
         self.bridge_k = int(bridge_k)
         self.edge_mode = edge_mode
+        self.supports_graph_info = True
 
         super().__init__(
             in_dim=in_dim,
@@ -323,13 +356,21 @@ class XelaSpatialGNNTransformer(SignalTransformer):
             prev_idx += count
         return signal_embed
 
-    def spatial_pre_embed(self, pos: torch.Tensor, num_chunks: int) -> torch.Tensor:
+    def spatial_pre_embed(self, pos: torch.Tensor, num_chunks: int, graph_info: Optional[dict] = None) -> torch.Tensor:
         pos_ref = pos.mean(dim=1)
-        edge_index, edge_attr = build_physical_pyg_graph_batch(
-            pos_ref,
-            bridge_k=self.bridge_k,
-            edge_mode=self.edge_mode,
-        )
+        if graph_info is None:
+            edge_index, edge_attr = build_physical_pyg_graph_batch(
+                pos_ref,
+                bridge_k=self.bridge_k,
+                edge_mode=self.edge_mode,
+            )
+        else:
+            edge_index, edge_attr = build_cached_pyg_graph_batch(
+                graph_info,
+                num_nodes=pos.shape[2],
+                device=pos.device,
+                edge_mode=self.edge_mode,
+            )
         node_features = pos_ref.reshape(-1, self.pos_chans)
         if self.edge_mode == "distance":
             spatial = self.spatial_gnn_1(node_features, edge_index, edge_attr)
@@ -342,9 +383,35 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         spatial = spatial.view(pos.shape[0], pos.shape[2], self.spatial_embed_dim)
         return einops.repeat(spatial, "b n c -> b t n c", t=num_chunks)
 
-    def pre_embed(self, x: torch.Tensor) -> torch.Tensor:
+    def pre_embed(self, x: torch.Tensor, graph_info: Optional[dict] = None) -> torch.Tensor:
         signal = x[..., : self.signal_chans]
         pos = x[..., self.signal_chans :]
         signal_embed = self.signal_pre_embed(signal)
-        spatial_embed = self.spatial_pre_embed(pos, num_chunks=signal_embed.shape[1])
+        spatial_embed = self.spatial_pre_embed(pos, num_chunks=signal_embed.shape[1], graph_info=graph_info)
         return signal_embed + spatial_embed
+
+    def forward_features(
+        self,
+        x,
+        masks: Optional[List[torch.Tensor]] = None,
+        mask_type: Optional[Literal["block", "tubelet"]] = None,
+        masktoken_masks: Optional[List[torch.Tensor]] = None,
+        graph_info: Optional[dict] = None,
+    ):
+        x = self.pre_embed(x, graph_info=graph_info)
+        x, bias = self.prepare_tokens_with_mask(x, masks, mask_type, masktoken_masks)
+        x_prenorm, x_postnorm = self.transform(x, bias)
+
+        reg_tokens = x_postnorm[:, : self.num_register_tokens]
+        patch_tokens = x_postnorm[:, self.num_register_tokens :]
+        patch_tokens_prenorm = x_prenorm[:, self.num_register_tokens :]
+        out = {
+            "x_norm_regtokens": reg_tokens,
+            "x_norm_patchtokens": patch_tokens,
+            "x_prenorm": patch_tokens_prenorm,
+        }
+        return out
+
+    def forward(self, x, masks=None, mask_type=None, masktoken_masks=None, graph_info: Optional[dict] = None):
+        out = self.forward_features(x, masks, mask_type, masktoken_masks, graph_info=graph_info)
+        return self.head(out["x_norm_patchtokens"])

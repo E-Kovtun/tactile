@@ -507,6 +507,31 @@ class XelaForceSLModule(ForceSLModule):
         self.test_pred, self.test_gt = [], []
         self.target_mean, self.target_std, self.target_max = None, None, None
         self.only_normal_force = self.model_task.only_normal_force
+
+    def _graph_to_device(self, graph_info, device, repeats: int = 1):
+        if graph_info is None:
+            return None
+        graph_info = {key: value.to(device) if hasattr(value, "to") else value for key, value in graph_info.items()}
+        if hasattr(graph_info.get("edge_count"), "dim") and graph_info["edge_count"].dim() > 1:
+            if repeats > 1 and graph_info["edge_count"].shape[1] != repeats:
+                raise ValueError(
+                    f"Graph chunks ({graph_info['edge_count'].shape[1]}) do not match encoder chunks ({repeats})"
+                )
+            return {
+                key: value.reshape(-1, *value.shape[2:]) if hasattr(value, "reshape") and value.dim() > 1 else value
+                for key, value in graph_info.items()
+            }
+        if repeats > 1:
+            graph_info = {
+                key: value.repeat_interleave(repeats, dim=0) if hasattr(value, "repeat_interleave") else value
+                for key, value in graph_info.items()
+            }
+        return graph_info
+
+    def _forward_encoder(self, sensor_data, graph_info=None):
+        if graph_info is not None and getattr(self.model_encoder, "supports_graph_info", False):
+            return self.model_encoder.forward_features(sensor_data, graph_info=graph_info)
+        return self.model_encoder.forward_features(sensor_data)
     
     def on_fit_start(self, train_dataloader=None, val_dataloader=None, trainer_instance=None):
         self.init_stats(train_dataloader, trainer_instance.fabric.device)
@@ -529,8 +554,9 @@ class XelaForceSLModule(ForceSLModule):
     def forward(self, batch, batch_idx):
         sensor_data = batch["sensor"]
         chunked_time = sensor_data.shape[1] // self.sequence_length
+        graph_info = self._graph_to_device(batch.get("graph"), sensor_data.device, repeats=chunked_time)
         sensor_data = einops.rearrange(sensor_data, "b (l k) n c -> (b l) k n c", k=self.sequence_length)
-        z = self.model_encoder.forward_features(sensor_data)["x_norm_patchtokens"]  # pyright: ignore[reportCallIssue]
+        z = self._forward_encoder(sensor_data, graph_info=graph_info)["x_norm_patchtokens"]  # pyright: ignore[reportCallIssue]
         z = F.layer_norm(z, (z.shape[-1],))
         z = einops.rearrange(z, "(b l) n c -> b l n c", l=chunked_time)
 
