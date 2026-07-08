@@ -6,12 +6,12 @@ defaults:
   - override /algorithm: xela_dinov2
   - _self_
 
-model_size: small
+model_size: tiny
 ckpt_path: ~
 
 task_name: pretrain_spatial_gnn_encoder
 ssl_name: dinov2
-ssl_model_size: small
+ssl_model_size: tiny
 experiment_name: ${task_name}_${ssl_name}
 seed: 42
 
@@ -48,7 +48,7 @@ algorithm:
     bridge_k: 4
     edge_mode: distance
     depth: ${model_info.${model_size}.depth}
-    num_heads: 6
+    num_heads: 3
     num_register_tokens: 1
     pos_embed_fn: learned
     with_masktoken: true

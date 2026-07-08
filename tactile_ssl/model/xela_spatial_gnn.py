@@ -171,7 +171,7 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         in_chans: int,
         time_chunk_size: int,
         sequence_length: int,
-        embed_dim: int = 384,
+        embed_dim: int = 192,
         signal_chans: int = 3,
         pos_chans: int = 3,
         signal_embed_dim: int = 192,
@@ -182,7 +182,7 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         bridge_k: int = 4,
         edge_mode: Literal["distance", "topology"] = "distance",
         depth: int = 12,
-        num_heads: int = 6,
+        num_heads: int = 3,
         mlp_ratio: float = 4.0,
         ffn_layer: str = "mlp",
         qkv_bias: bool = True,
@@ -204,8 +204,8 @@ class XelaSpatialGNNTransformer(SignalTransformer):
             raise ValueError("in_chans must equal signal_chans + pos_chans")
         if in_dim != 368:
             raise ValueError("XelaSpatialGNNTransformer currently expects 368 Xela sensors")
-        if embed_dim != signal_embed_dim + spatial_embed_dim:
-            raise ValueError("embed_dim must equal signal_embed_dim + spatial_embed_dim")
+        if embed_dim != signal_embed_dim or embed_dim != spatial_embed_dim:
+            raise ValueError("embed_dim, signal_embed_dim, and spatial_embed_dim must match for additive fusion")
         if graph_type != "physical":
             raise ValueError("Only graph_type='physical' is supported")
         if spatial_embed_dim % spatial_gat_heads != 0:
@@ -342,4 +342,4 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         pos = x[..., self.signal_chans :]
         signal_embed = self.signal_pre_embed(signal)
         spatial_embed = self.spatial_pre_embed(pos, num_chunks=signal_embed.shape[1])
-        return torch.cat([signal_embed, spatial_embed], dim=-1)
+        return signal_embed + spatial_embed

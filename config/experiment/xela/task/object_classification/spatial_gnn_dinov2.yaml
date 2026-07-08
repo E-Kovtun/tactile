@@ -8,7 +8,7 @@ defaults:
 
 sensor: xela
 ssl_name: dinov2
-ssl_model_size: small
+ssl_model_size: tiny
 checkpoint_encoder: ~
 ckpt_path: ~
 resume_id: ~
@@ -68,7 +68,7 @@ task:
     bridge_k: 4
     edge_mode: distance
     depth: ${model_info.${ssl_model_size}.depth}
-    num_heads: 6
+    num_heads: 3
     num_register_tokens: 1
     pos_embed_fn: learned
     with_masktoken: true
