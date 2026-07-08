@@ -290,12 +290,17 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         self.xela_mean = xela_mean
         self.xela_std = xela_std
 
-    def normalize_signal(self, signal: torch.Tensor) -> torch.Tensor:
+    def normalize(self, x: torch.Tensor) -> torch.Tensor:
         if hasattr(self, "xela_mean") and hasattr(self, "xela_std"):
-            mean = self.xela_mean.to(device=signal.device, dtype=signal.dtype)
-            std = self.xela_std.to(device=signal.device, dtype=signal.dtype)
-            signal = (signal - mean) / std
-        return signal
+            mean = self.xela_mean.to(device=x.device, dtype=x.dtype)
+            std = self.xela_std.to(device=x.device, dtype=x.dtype)
+            signal = (x[..., : self.signal_chans] - mean) / std
+            pos = x[..., self.signal_chans :]
+            return torch.cat([signal, pos], dim=-1)
+        return x
+
+    def normalize_signal(self, signal: torch.Tensor) -> torch.Tensor:
+        return self.normalize(signal)[..., : self.signal_chans]
 
     def signal_pre_embed(self, signal: torch.Tensor) -> torch.Tensor:
         b = signal.shape[0]
