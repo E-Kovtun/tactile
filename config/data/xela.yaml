@@ -26,6 +26,7 @@ cache:
   force_recompute: false
   fingerprint_mode: stats
   log_hits: true
+  num_workers: 32
 
 preprocessing:
   outlier_min: 20000

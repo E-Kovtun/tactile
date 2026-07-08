@@ -6,6 +6,7 @@
 #
 
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 import os
 
@@ -59,6 +60,16 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
             )
             return dataset
 
+        def instantiate_xela_tasks(tasks):
+            cache_cfg = data_cfg.get("cache", {})
+            num_workers = int(cache_cfg.get("num_workers", 0))
+            if num_workers > 0 and len(tasks) > 1:
+                max_workers = min(num_workers, len(tasks))
+                logger.info(f"Loading Xela datasets with {max_workers} cache workers")
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    return list(pool.map(lambda task: get_xela_dataset(*task), tasks))
+            return [get_xela_dataset(*task) for task in tasks]
+
         train_datasets, val_datasets = [], []
         dataset_list: List = data_cfg.dataset_list
         object_classes = []
@@ -69,22 +80,24 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
                     dataset_l.train_dataset_ids,
                     dataset_l.val_dataset_ids,
                 )
+                train_tasks, val_tasks = [], []
                 for obj in dataset_l.sequence_list:
+                    object_class = len(object_classes)
                     object_classes.append(obj)
                     object_class_sizes.append(0)
-                    for d_id in train_dataset_ids:
-                        dataset = get_xela_dataset(
-                            dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
-                        )
-                        if dataset is not None:
-                            object_class_sizes[-1] += len(dataset)
+                    train_tasks.extend(
+                        (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                        for d_id in train_dataset_ids
+                    )
+                    val_tasks.extend(
+                        (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                        for d_id in val_dataset_ids
+                    )
+                for dataset in instantiate_xela_tasks(train_tasks):
+                    if dataset is not None:
+                        object_class_sizes[dataset.object_label] += len(dataset)
                         train_datasets.append(dataset)
-                    for d_id in val_dataset_ids:
-                        val_datasets.append(
-                            get_xela_dataset(
-                                dataset_l.dataset, dataset_name=obj, d_id=d_id, object_class=len(object_classes) - 1
-                            )
-                        )
+                val_datasets.extend(dataset for dataset in instantiate_xela_tasks(val_tasks) if dataset is not None)
             elif dataset_l.type == "joystick_control":
                 with open_dict(dataset_l.dataset.config):
                     dataset_l.dataset.config.object_label = len(object_classes)
@@ -95,6 +108,7 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
                 val_datasets.append(val_dset)
 
         print(f"Object class sizes: {object_class_sizes}")
+        object_class_sizes = np.asarray(object_class_sizes)
         object_class_ratios = object_class_sizes / np.sum(object_class_sizes)
         object_class_weights = 1 / object_class_ratios
         object_class_weights = object_class_weights / np.sum(object_class_weights)
