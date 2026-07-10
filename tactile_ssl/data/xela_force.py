@@ -45,6 +45,12 @@ def _ensure_force_cache_config(config: DictConfig) -> None:
         config.cache.log_hits = True
     if config.cache.get("num_workers") is None:
         config.cache.num_workers = 0
+    if config.cache.get("lock_timeout_s") is None:
+        config.cache.lock_timeout_s = 1800.0
+    if config.cache.get("stale_lock_s") is None:
+        config.cache.stale_lock_s = 3600.0
+    if config.cache.get("lock_log_interval_s") is None:
+        config.cache.lock_log_interval_s = 30.0
 
 
 def _force_cache_config(config: DictConfig) -> dict:
@@ -54,6 +60,17 @@ def _force_cache_config(config: DictConfig) -> dict:
         "force_recompute": bool(config.cache.force_recompute),
         "log_hits": bool(config.cache.log_hits),
         "num_workers": int(config.cache.num_workers),
+        "lock_timeout_s": float(config.cache.lock_timeout_s),
+        "stale_lock_s": float(config.cache.stale_lock_s),
+        "lock_log_interval_s": float(config.cache.lock_log_interval_s),
+    }
+
+
+def _force_cache_lock_kwargs(cache_config: dict) -> dict:
+    return {
+        "lock_timeout_s": cache_config["lock_timeout_s"],
+        "stale_lock_s": cache_config["stale_lock_s"],
+        "lock_log_interval_s": cache_config["lock_log_interval_s"],
     }
 
 
@@ -140,6 +157,7 @@ def _load_cached_force_episode(args: tuple[str, str, Optional[str], dict, dict])
         enabled=cache_config["enabled"],
         force_recompute=cache_config["force_recompute"],
         log_hits=cache_config["log_hits"],
+        **_force_cache_lock_kwargs(cache_config),
     )
     spec = CacheSpec(
         artifact="xela_force_episode",
@@ -424,6 +442,7 @@ class ForceDataset(data.Dataset):
             enabled=self.cache_config["enabled"],
             force_recompute=self.cache_config["force_recompute"],
             log_hits=self.cache_config["log_hits"],
+            **_force_cache_lock_kwargs(self.cache_config),
         )
         spec = CacheSpec(
             artifact="force_window_sensor_graphs",

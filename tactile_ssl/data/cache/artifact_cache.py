@@ -2,7 +2,11 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional
 import logging
 import os
+import shutil
+import socket
+import threading
 import time
+import uuid
 
 import numpy as np
 import yaml
@@ -21,11 +25,19 @@ class ArtifactCache:
         enabled: bool = True,
         force_recompute: bool = False,
         log_hits: bool = True,
+        lock_timeout_s: float = 1800.0,
+        stale_lock_s: float = 3600.0,
+        lock_log_interval_s: float = 30.0,
+        lock_poll_s: float = 0.1,
     ):
         self.root = Path(root)
         self.enabled = enabled
         self.force_recompute = force_recompute
         self.log_hits = log_hits
+        self.lock_timeout_s = lock_timeout_s
+        self.stale_lock_s = stale_lock_s
+        self.lock_log_interval_s = lock_log_interval_s
+        self.lock_poll_s = lock_poll_s
 
     def build_key(self, spec: CacheSpec) -> str:
         payload = {
@@ -51,20 +63,128 @@ class ArtifactCache:
     def _artifact_exists(self, npz_path: Path, yaml_path: Path) -> bool:
         return npz_path.exists() and yaml_path.exists()
 
-    def _acquire_lock(self, lock_path: Path) -> None:
+    def _owner_path(self, lock_path: Path) -> Path:
+        return lock_path / "owner.yaml"
+
+    def _heartbeat_path(self, lock_path: Path) -> Path:
+        return lock_path / "heartbeat"
+
+    def _read_lock_owner(self, lock_path: Path) -> dict:
+        try:
+            with open(self._owner_path(lock_path)) as f:
+                return yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            return {}
+        except Exception as exc:
+            log.warning(f"Unable to read cache lock owner at {lock_path}: {exc}")
+            return {}
+
+    def _write_lock_owner(self, lock_path: Path, token: str) -> None:
+        owner = {
+            "token": token,
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "created_at": time.time(),
+        }
+        with open(self._owner_path(lock_path), "w") as f:
+            yaml.safe_dump(owner, f, sort_keys=True)
+        self._touch_lock(lock_path)
+
+    def _touch_lock(self, lock_path: Path) -> None:
+        now = time.time()
+        heartbeat_path = self._heartbeat_path(lock_path)
+        heartbeat_path.touch(exist_ok=True)
+        os.utime(heartbeat_path, (now, now))
+        os.utime(lock_path, (now, now))
+
+    def _lock_age_s(self, lock_path: Path) -> float:
+        candidates = [lock_path, self._heartbeat_path(lock_path), self._owner_path(lock_path)]
+        mtimes = []
+        for path in candidates:
+            try:
+                mtimes.append(path.stat().st_mtime)
+            except FileNotFoundError:
+                pass
+        if not mtimes:
+            return 0.0
+        return max(0.0, time.time() - max(mtimes))
+
+    def _remove_stale_lock(self, lock_path: Path) -> None:
+        try:
+            if lock_path.is_dir():
+                shutil.rmtree(lock_path)
+            else:
+                lock_path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass
+
+    def _acquire_lock(self, lock_path: Path) -> str:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
+        token = uuid.uuid4().hex
+        start_time = time.monotonic()
+        last_log_time = start_time
         while True:
             try:
                 lock_path.mkdir()
-                return
+                self._write_lock_owner(lock_path, token)
+                return token
             except FileExistsError:
-                time.sleep(0.1)
+                now = time.monotonic()
+                wait_s = now - start_time
+                age_s = self._lock_age_s(lock_path)
+                owner = self._read_lock_owner(lock_path)
 
-    def _release_lock(self, lock_path: Path) -> None:
-        try:
-            lock_path.rmdir()
-        except FileNotFoundError:
-            pass
+                if self.stale_lock_s is not None and age_s > self.stale_lock_s:
+                    log.warning(
+                        f"Removing stale cache lock at {lock_path}; "
+                        f"age={age_s:.1f}s, owner={owner}"
+                    )
+                    self._remove_stale_lock(lock_path)
+                    continue
+
+                if self.lock_timeout_s is not None and wait_s > self.lock_timeout_s:
+                    raise TimeoutError(
+                        f"Timed out after {wait_s:.1f}s waiting for cache lock {lock_path}. "
+                        f"Lock age is {age_s:.1f}s, owner={owner}. "
+                        "If no matching process is alive, remove this lock directory or use a different data.cache.root."
+                    )
+
+                if now - last_log_time >= self.lock_log_interval_s:
+                    log.warning(
+                        f"Waiting for cache lock {lock_path}; "
+                        f"waited={wait_s:.1f}s, lock_age={age_s:.1f}s, owner={owner}"
+                    )
+                    last_log_time = now
+
+                time.sleep(self.lock_poll_s)
+
+    def _start_lock_heartbeat(self, lock_path: Path, token: str) -> tuple[threading.Event, threading.Thread]:
+        stop_event = threading.Event()
+
+        def run() -> None:
+            while not stop_event.wait(10.0):
+                owner = self._read_lock_owner(lock_path)
+                if owner.get("token") != token:
+                    log.warning(f"Stopping cache lock heartbeat for {lock_path}; lock owner changed")
+                    return
+                try:
+                    self._touch_lock(lock_path)
+                except FileNotFoundError:
+                    log.warning(f"Stopping cache lock heartbeat for {lock_path}; lock disappeared")
+                    return
+                except Exception as exc:
+                    log.warning(f"Unable to update cache lock heartbeat for {lock_path}: {exc}")
+
+        thread = threading.Thread(target=run, name=f"cache-lock-heartbeat-{lock_path.name}", daemon=True)
+        thread.start()
+        return stop_event, thread
+
+    def _release_lock(self, lock_path: Path, token: str) -> None:
+        owner = self._read_lock_owner(lock_path)
+        if owner and owner.get("token") != token:
+            log.warning(f"Not releasing cache lock {lock_path}; owner changed to {owner}")
+            return
+        self._remove_stale_lock(lock_path)
 
     def _write_artifact(
         self,
@@ -126,7 +246,8 @@ class ArtifactCache:
             return arrays, key
 
         lock_path = self.lock_path(spec.artifact, key)
-        self._acquire_lock(lock_path)
+        lock_token = self._acquire_lock(lock_path)
+        heartbeat_stop, heartbeat_thread = self._start_lock_heartbeat(lock_path, lock_token)
         try:
             if not self.force_recompute and self._artifact_exists(npz_path, yaml_path):
                 if self.log_hits:
@@ -137,5 +258,7 @@ class ArtifactCache:
             arrays = dict(compute_fn())
             self._write_artifact(spec, key, arrays, metadata, npz_path, yaml_path)
         finally:
-            self._release_lock(lock_path)
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=1.0)
+            self._release_lock(lock_path, lock_token)
         return arrays, key
