@@ -264,6 +264,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=[93.05753748, 100.04659228, 108.84810989],
     )
+    parser.add_argument(
+        "--reference-atol",
+        type=float,
+        default=2e-4,
+        help="Absolute tolerance for the final reference verdict.",
+    )
     args = parser.parse_args()
     if args.cache_enabled is not None:
         args.cache_enabled = args.cache_enabled == "true"
@@ -373,12 +379,13 @@ def main() -> int:
             compare_vectors("concat.std_vs_utils", concat_stats["std"], legacy_std, report)
 
         report.section("Interpretation")
-        if np.allclose(train_path_mean, reference_mean, rtol=1e-5, atol=1e-5) and np.allclose(
-            train_path_std, reference_std, rtol=1e-5, atol=1e-5
+        report.kv("reference_verdict_atol", args.reference_atol)
+        if np.allclose(train_path_mean, reference_mean, rtol=0.0, atol=args.reference_atol) and np.allclose(
+            train_path_std, reference_std, rtol=0.0, atol=args.reference_atol
         ):
             report.line("RESULT: train.py runtime path matches the reference normalization.")
-        elif np.allclose(legacy_mean, reference_mean, rtol=1e-5, atol=1e-5) and np.allclose(
-            legacy_std, reference_std, rtol=1e-5, atol=1e-5
+        elif np.allclose(legacy_mean, reference_mean, rtol=0.0, atol=args.reference_atol) and np.allclose(
+            legacy_std, reference_std, rtol=0.0, atol=args.reference_atol
         ):
             report.line("RESULT: raw dataset arrays match the reference, but train.py cached normalization differs.")
         else:

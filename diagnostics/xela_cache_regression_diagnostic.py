@@ -626,6 +626,9 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         "force_recompute": True,
         "log_hits": True,
         "num_workers": 0,
+        "lock_timeout_s": 1800.0,
+        "stale_lock_s": 3600.0,
+        "lock_log_interval_s": 30.0,
     }
 
     report.progress("force: computing legacy episode")
@@ -726,6 +729,9 @@ def compare_relative_pose(data_root: Path, args: argparse.Namespace, report: Rep
         "force_recompute": True,
         "log_hits": True,
         "num_workers": 0,
+        "lock_timeout_s": 1800.0,
+        "stale_lock_s": 3600.0,
+        "lock_log_interval_s": 30.0,
     }
     report.progress("relative_pose: computing current uncached episode")
     uncached = _load_relative_pose_episode_uncached(str(episode), str(urdf), str(baseline), params)
