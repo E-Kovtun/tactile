@@ -587,6 +587,79 @@ def normalization_legacy(arrays: list[np.ndarray]) -> dict[str, np.ndarray]:
     }
 
 
+def inspect_existing_force_cache(
+    xela_force_module: Any,
+    existing_cache_root: Path,
+    episode: Path,
+    urdf: Path,
+    baseline: Path,
+    params: dict[str, Any],
+    uncached: dict[str, np.ndarray],
+    report: Report,
+) -> None:
+    report.section("Existing Force Cache Inspection")
+    report.kv("existing_cache_root", existing_cache_root)
+    if not existing_cache_root.exists():
+        report.line("RESULT: existing cache root does not exist")
+        return
+
+    spec = xela_force_module.CacheSpec(
+        artifact="xela_force_episode",
+        schema_version=1,
+        semantic_params={
+            "data_path": str(episode),
+            "files": xela_force_module._force_episode_fingerprints(episode, str(baseline), str(urdf)),
+            "preprocessing": params,
+        },
+        producer_functions=(
+            xela_force_module._load_force_episode_uncached,
+            xela_force_module._compute_force_episode,
+            xela_force_module.read_xela_data,
+            xela_force_module.read_allegro_joint_data,
+            xela_force_module.read_force_data,
+            xela_force_module.joint_angles_to_poses,
+            xela_force_module.compute_interp_timestamps,
+        ),
+        producer_constants={"XELA_FLATTEN_ORDER": xela_force_module.XELA_FLATTEN_ORDER},
+    )
+    cache = xela_force_module.ArtifactCache(
+        root=str(existing_cache_root),
+        enabled=True,
+        force_recompute=False,
+        log_hits=True,
+    )
+    expected_key = cache.build_key(spec)
+    npz_path, yaml_path = cache.artifact_paths(spec.artifact, expected_key)
+    report.kv("expected_artifact", spec.artifact)
+    report.kv("expected_key", expected_key)
+    report.kv("expected_npz", npz_path)
+    report.kv("expected_yaml", yaml_path)
+
+    artifact_dir = existing_cache_root / spec.artifact
+    existing_npzs = sorted(artifact_dir.glob("*.npz")) if artifact_dir.exists() else []
+    report.kv("existing_npz_count_for_artifact", len(existing_npzs))
+    for path in existing_npzs[:20]:
+        report.line(f"  existing_npz: {path.name} size={path.stat().st_size}")
+    if len(existing_npzs) > 20:
+        report.line(f"  ... truncated {len(existing_npzs) - 20} npz files")
+
+    if not npz_path.exists() or not yaml_path.exists():
+        report.line("RESULT: current expected cache artifact is missing; this run would recompute, not use old artifact")
+        return
+
+    report.line("RESULT: current expected cache artifact exists; loading read-only and comparing")
+    with np.load(npz_path, allow_pickle=False) as data:
+        existing = {name: data[name] for name in data.files}
+
+    for key in ["xela_array", "xela_force_array", "force_data", "timestamps", "sensor_positions", "num_frames"]:
+        if key not in existing:
+            report.line(f"[COMPARE] existing_cache.{key}")
+            report.line("  RESULT: MISSING_KEY")
+            continue
+        summarize_array(f"existing_cache.{key}", existing[key], report)
+        compare_arrays(f"force.existing_cache_vs_uncached.{key}", existing[key], uncached[key], report)
+
+
 def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cache_root: Path) -> None:
     report.section("Force Downstream Pipeline")
     report.progress("force: resolving diagnostic episode")
@@ -641,6 +714,20 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         report.line("force episode helpers: available")
         report.progress("force: computing current uncached episode")
         uncached = xela_force_module._load_force_episode_uncached(str(episode), str(urdf), str(baseline), params)
+        if args.existing_cache_root:
+            existing_cache_root = Path(args.existing_cache_root).expanduser()
+            if not existing_cache_root.is_absolute():
+                existing_cache_root = (REPO_ROOT / existing_cache_root).resolve()
+            inspect_existing_force_cache(
+                xela_force_module,
+                existing_cache_root,
+                episode,
+                urdf,
+                baseline,
+                params,
+                uncached,
+                report,
+            )
         report.progress("force: computing current cached episode with force_recompute=true")
         cached = xela_force_module._load_cached_force_episode(
             (str(episode), str(urdf), str(baseline), params, cache_config)
@@ -787,6 +874,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default="./sparsh-skin-dataset")
     parser.add_argument("--out", default="diagnostics/xela_cache_regression_report.txt")
     parser.add_argument("--cache-root", default=None, help="Default: a temporary cache under /tmp.")
+    parser.add_argument(
+        "--existing-cache-root",
+        default=None,
+        help="Read-only inspection of an existing cache root, e.g. ./.cache/xela_artifacts.",
+    )
     parser.add_argument("--keep-cache", action="store_true")
     parser.add_argument("--pretrain-sequence", default=None)
     parser.add_argument("--pretrain-id", type=int, default=None)
