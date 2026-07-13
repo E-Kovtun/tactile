@@ -14,6 +14,9 @@ hydra:
     dir: ${paths.log_dir}/${experiment_name}/${run_name}_${hydra.job.id}
 
 trainer:
+  # Reference Xela downstream runs use one GPU. Keeping this explicit avoids
+  # changing the global batch size when several GPUs are visible to Fabric.
+  devices: 1
   max_epochs: 51
   validation_frequency: 1 
   sanity_validate: true
