@@ -23,6 +23,19 @@ class Module(ABC):
     def on_fit_start(self, train_dataloader, val_dataloader, trainer_instance=None):
         pass
 
+    def get_checkpoint_state(self) -> Dict[str, Any]:
+        """Return algorithm state that is not part of ``nn.Module.state_dict``."""
+        return {}
+
+    def load_checkpoint_state(
+        self,
+        state: Optional[Dict[str, Any]],
+        global_step: int,
+        current_epoch: int,
+    ) -> None:
+        """Restore non-module state after model and optimizer loading."""
+        pass
+
     def on_train_epoch_end(self, trainer_instance=None):
         pass
 

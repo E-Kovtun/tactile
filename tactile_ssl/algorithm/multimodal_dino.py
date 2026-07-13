@@ -114,6 +114,9 @@ class MultimodalDINOModule(Module, nn.Module):
             teacher_temp = tuple(teacher_temp)
         self.teacher_temp = teacher_temp
         self.teacher_warmup_epochs = teacher_warmup_epochs
+        self._schedule_step = 0
+        self._schedule_total_steps = None
+        self._schedule_steps_per_epoch = None
 
     @abstractmethod
     def prepare_data(self, batch: Dict[str, Any], *args, **kwargs) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -165,6 +168,7 @@ class MultimodalDINOModule(Module, nn.Module):
                     moving_average_decay,
                 )
         self.log_on_batch_end(outputs, stage="train", trainer_instance=trainer_instance)
+        self._schedule_step += 1
 
     def on_validation_batch_end(
         self,
@@ -358,19 +362,9 @@ class MultimodalDINOModule(Module, nn.Module):
             T_max=int(num_epochs * num_iterations_per_epoch),
             steps_per_epoch=num_iterations_per_epoch,
         )
-        if isinstance(self.moving_average_decay, tuple):
-            self.momentum_scheduler = (
-                self.moving_average_decay[0]
-                + i
-                * (self.moving_average_decay[1] - self.moving_average_decay[0])
-                / (num_epochs * num_iterations_per_epoch)
-                for i in range(int(num_epochs * num_iterations_per_epoch) + 1)
-            )
-        self.current_teacher_temp = self.teacher_temp
-        if isinstance(self.teacher_temp, tuple):
-            self.teacher_temp_scheduler = self.teacher_temp_schedule(num_epochs, num_iterations_per_epoch)
-
-            self.current_teacher_temp = self.teacher_temp[0]
+        self._schedule_total_steps = int(num_epochs * num_iterations_per_epoch)
+        self._schedule_steps_per_epoch = num_iterations_per_epoch
+        self._reset_training_schedules(0)
 
         if self.wd_scheduler_partial is None:
             return (
@@ -393,9 +387,59 @@ class MultimodalDINOModule(Module, nn.Module):
             {"wd_scheduler": wd_scheduler, "interval": "step", "frequency": 1},
         )
 
-    def teacher_temp_schedule(self, num_epochs, num_iterations_per_epoch):
+    def _reset_training_schedules(self, start_step: int) -> None:
+        if self._schedule_total_steps is None or self._schedule_steps_per_epoch is None:
+            raise RuntimeError("Training schedules have not been configured")
+        if not 0 <= start_step <= self._schedule_total_steps:
+            raise RuntimeError("Invalid DINO training schedule position")
+        self._schedule_step = start_step
+        if isinstance(self.moving_average_decay, tuple):
+            self.momentum_scheduler = (
+                self.moving_average_decay[0]
+                + i * (self.moving_average_decay[1] - self.moving_average_decay[0]) / self._schedule_total_steps
+                for i in range(start_step, self._schedule_total_steps + 1)
+            )
+        self.current_teacher_temp = self.teacher_temp
+        if isinstance(self.teacher_temp, tuple):
+            self.teacher_temp_scheduler = self.teacher_temp_schedule(
+                self._schedule_total_steps,
+                self._schedule_steps_per_epoch,
+                start_step=start_step,
+            )
+            self.current_teacher_temp = self._teacher_temp_at_step(max(start_step - 1, 0))
+
+    def get_checkpoint_state(self) -> Dict[str, Any]:
+        return {
+            "mask_step": self.step,
+            "schedule_step": self._schedule_step,
+            "schedule_total_steps": self._schedule_total_steps,
+            "schedule_steps_per_epoch": self._schedule_steps_per_epoch,
+        }
+
+    def load_checkpoint_state(self, state, global_step: int, current_epoch: int) -> None:
+        if state is None:
+            self.step = global_step - 1
+            start_step = global_step
+        else:
+            if int(state["schedule_total_steps"]) != self._schedule_total_steps:
+                raise RuntimeError("DINO total schedule length changed since the checkpoint was created")
+            if int(state["schedule_steps_per_epoch"]) != self._schedule_steps_per_epoch:
+                raise RuntimeError("DINO steps per epoch changed since the checkpoint was created")
+            self.step = int(state["mask_step"])
+            start_step = int(state["schedule_step"])
+        self._reset_training_schedules(start_step)
+
+    def _teacher_temp_at_step(self, step: int):
+        warmup_steps = self.teacher_warmup_epochs * self._schedule_steps_per_epoch
+        if warmup_steps == 0:
+            return self.teacher_temp[1]
+        if step > warmup_steps:
+            return self.teacher_temp[1]
+        return self.teacher_temp[0] + step * (self.teacher_temp[1] - self.teacher_temp[0]) / warmup_steps
+
+    def teacher_temp_schedule(self, total_steps, num_iterations_per_epoch, start_step=0):
         assert isinstance(self.teacher_temp, tuple), "Teacher temp must be a tuple if this function is called"
-        for i in range(int(num_epochs * num_iterations_per_epoch) + 1):
+        for i in range(start_step, total_steps + 1):
             teacher_temp = None
             if i > (self.teacher_warmup_epochs * num_iterations_per_epoch):
                 teacher_temp = self.teacher_temp[1]

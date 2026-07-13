@@ -21,6 +21,8 @@ import datetime
 
 log = get_pylogger(__name__)
 
+CHECKPOINT_FORMAT_VERSION = 2
+
 
 class Trainer:
     def __init__(
@@ -132,6 +134,9 @@ class Trainer:
 
         self.state = None
         self.training_state = None
+        self._scheduler_cfg = None
+        self._wd_scheduler_cfg = None
+        self._checkpoint_module = None
 
         # ensures limit_X_batches is either int or inf
         if not isinstance(limit_train_batches, int):
@@ -202,6 +207,7 @@ class Trainer:
             # as it would require fabric to hold a reference to the module, which we don't want to.
             raise NotImplementedError("FSDP not supported at the moment")
 
+        checkpoint_module = module
         module = self.fabric.setup(module)
 
         optimizer, scheduler_cfg, wd_scheduler_cfg = self._parse_optimizers_schedulers(
@@ -214,22 +220,27 @@ class Trainer:
         assert optimizer is not None, "Could not parse optimizer from SSL module: {module.__class__.__name__}"
         optimizer = self.fabric.setup_optimizers(optimizer)
 
-        # assemble state (current epoch and global step will be added in save)
-        state = {"model": module, "optim": optimizer, "scheduler": scheduler_cfg}
-
-        if wd_scheduler_cfg is not None:
-            state.update(wd_scheduler=wd_scheduler_cfg)
+        # Scheduler objects must not be nested in Fabric state. Fabric replaces
+        # non-stateful mappings on load, which disconnects them from optimizer.
+        state = {"model": module, "optim": optimizer}
+        self._scheduler_cfg = scheduler_cfg
+        self._wd_scheduler_cfg = wd_scheduler_cfg
+        self._checkpoint_module = checkpoint_module
+        resumed_from_checkpoint = False
 
         # load last checkpoint if available
         if ckpt_path is not None and os.path.isdir(ckpt_path):
             latest_checkpoint_path = self.get_latest_checkpoint(ckpt_path)
             if latest_checkpoint_path is not None:
                 log.info(f"Loading latest checkpoint to resume training: {latest_checkpoint_path}")
-                self.load(state, latest_checkpoint_path)
-
-                scheduler_cfg = state["scheduler"]
-                if wd_scheduler_cfg is not None:
-                    wd_scheduler_cfg = state["wd_scheduler"]
+                self.load(
+                    state,
+                    latest_checkpoint_path,
+                    scheduler_cfg=scheduler_cfg,
+                    wd_scheduler_cfg=wd_scheduler_cfg,
+                    module=checkpoint_module,
+                )
+                resumed_from_checkpoint = True
 
                 # check if we even need to train here
                 if self.max_epochs is not None and self.current_epoch >= self.max_epochs:
@@ -241,7 +252,7 @@ class Trainer:
         module.on_fit_start(train_loader, val_loader, self)
 
         # Always start with one validation loop first
-        if self.sanity_validate and self.should_validate:
+        if not resumed_from_checkpoint and self.sanity_validate and self.should_validate:
             self.val_loop(module, val_loader, limit_batches=self.limit_val_batches)
 
         while not self.should_stop:
@@ -626,7 +637,7 @@ class Trainer:
             scheduler_cfg["scheduler"].step(monitor)
 
         for i, _ in enumerate(scheduler_cfg["scheduler"].optimizer.param_groups):
-            self.writer.add_scalar("lr_{i}", scheduler_cfg["scheduler"].get_last_lr()[i], self.global_step)
+            self.writer.add_scalar(f"lr_{i}", scheduler_cfg["scheduler"].get_last_lr()[i], self.global_step)
 
     @property
     def should_validate(self) -> bool:
@@ -664,7 +675,14 @@ class Trainer:
             return tqdm(iterable, total=total, **kwargs)
         return iterable
 
-    def load(self, state: Optional[Mapping], path: str) -> None:
+    def load(
+        self,
+        state: Optional[Mapping],
+        path: str,
+        scheduler_cfg: Optional[Mapping] = None,
+        wd_scheduler_cfg: Optional[Mapping] = None,
+        module: Optional[Module] = None,
+    ) -> None:
         """Loads a checkpoint from a given file into state.
 
         Args:
@@ -689,10 +707,129 @@ class Trainer:
 
         self.global_step = remainder.pop("global_step")
         self.current_epoch = remainder.pop("current_epoch")
+        checkpoint_version = remainder.pop("checkpoint_format_version", 1)
+
+        scheduler_state = remainder.pop("scheduler", None)
+        wd_scheduler_state = remainder.pop("wd_scheduler", None)
+        self._restore_scheduler(
+            scheduler_cfg,
+            scheduler_state,
+            object_key="scheduler",
+            checkpoint_version=checkpoint_version,
+        )
+        self._restore_scheduler(
+            wd_scheduler_cfg,
+            wd_scheduler_state,
+            object_key="wd_scheduler",
+            checkpoint_version=checkpoint_version,
+        )
+
+        algorithm_state = remainder.pop("algorithm_state", None)
+        if module is not None:
+            module.load_checkpoint_state(
+                algorithm_state,
+                global_step=self.global_step,
+                current_epoch=self.current_epoch,
+            )
 
         if remainder:
             raise RuntimeError(f"Unused Checkpoint Values: {remainder}")
         log.info(f"Loaded checkpoint from {path}")
+
+    @staticmethod
+    def _restore_scheduler(
+        scheduler_cfg: Optional[Mapping],
+        checkpoint_value: Any,
+        object_key: str,
+        checkpoint_version: int,
+    ) -> None:
+        if scheduler_cfg is None:
+            if checkpoint_value is not None:
+                log.warning("Ignoring checkpoint %s because it is not configured", object_key)
+            return
+
+        if checkpoint_value is None:
+            raise RuntimeError(f"Checkpoint does not contain state for configured {object_key}")
+
+        scheduler = scheduler_cfg[object_key]
+        if object_key == "scheduler":
+            optimizer_values = [group["lr"] for group in scheduler.optimizer.param_groups]
+        else:
+            optimizer_values = [
+                group["weight_decay"]
+                for group in scheduler.optimizer.param_groups
+                if ("WD_exclude" not in group) or not group["WD_exclude"]
+            ]
+        if checkpoint_version < CHECKPOINT_FORMAT_VERSION:
+            if not isinstance(checkpoint_value, Mapping) or object_key not in checkpoint_value:
+                raise RuntimeError(f"Invalid legacy checkpoint value for {object_key}")
+            legacy_scheduler = checkpoint_value[object_key]
+            if legacy_scheduler is None:
+                raise RuntimeError(f"Legacy checkpoint contains an empty {object_key}")
+            checkpoint_value = legacy_scheduler.state_dict()
+
+        scheduler.load_state_dict(checkpoint_value)
+
+        if object_key == "scheduler":
+            restored_lrs = scheduler.get_last_lr()
+            if len(restored_lrs) != len(scheduler.optimizer.param_groups):
+                raise RuntimeError("LR scheduler state does not match optimizer parameter groups")
+            Trainer._validate_optimizer_schedule_values(
+                optimizer_values,
+                restored_lrs,
+                object_key,
+                checkpoint_version,
+            )
+            for group, restored_lr in zip(scheduler.optimizer.param_groups, restored_lrs):
+                group["lr"] = restored_lr
+        elif hasattr(scheduler, "apply_current_value"):
+            restored_wd = scheduler.get_current_value()
+            Trainer._validate_optimizer_schedule_values(
+                optimizer_values,
+                [restored_wd] * len(optimizer_values),
+                object_key,
+                checkpoint_version,
+            )
+            scheduler.apply_current_value()
+
+        log.info("Restored %s state from checkpoint format v%s", object_key, checkpoint_version)
+
+    @staticmethod
+    def _validate_optimizer_schedule_values(
+        optimizer_values: List[float],
+        scheduler_values: List[float],
+        object_key: str,
+        checkpoint_version: int,
+    ) -> None:
+        if np.allclose(optimizer_values, scheduler_values, rtol=1e-7, atol=1e-12):
+            return
+        message = (
+            f"Checkpoint {object_key} values {scheduler_values} do not match "
+            f"optimizer values {optimizer_values}"
+        )
+        if checkpoint_version >= CHECKPOINT_FORMAT_VERSION:
+            raise RuntimeError(message)
+        log.warning("%s; repairing legacy checkpoint from scheduler state", message)
+
+    def _checkpoint_state(self) -> dict:
+        checkpoint_state = dict(self.state)
+        checkpoint_state.update(
+            checkpoint_format_version=CHECKPOINT_FORMAT_VERSION,
+            global_step=self.global_step,
+            current_epoch=self.current_epoch,
+            scheduler=(
+                self._scheduler_cfg["scheduler"].state_dict()
+                if self._scheduler_cfg is not None
+                else None
+            ),
+            wd_scheduler=(
+                self._wd_scheduler_cfg["wd_scheduler"].state_dict()
+                if self._wd_scheduler_cfg is not None
+                else None
+            ),
+            algorithm_state=self._checkpoint_module.get_checkpoint_state(),
+        )
+        return checkpoint_state
 
     def get_model_state_dict(self):
         if self.save_probe_weights_only:
@@ -718,7 +855,7 @@ class Trainer:
         else:
             self.fabric.save(
                 os.path.join(self.checkpoint_dir, f"epoch-{self.current_epoch:04d}.ckpt"),
-                self.state,
+                self._checkpoint_state(),
             )
 
     def save_early_stopping_checkpoint(self, early_stopping_checkpoint_name: Optional[str] = 'best') -> None:
@@ -726,7 +863,7 @@ class Trainer:
         # torch.save(state_dict, os.path.join(self.checkpoint_dir, f"{early_stopping_checkpoint_name}.pth"))  
         self.fabric.save(
             os.path.join(self.checkpoint_dir,  f"{early_stopping_checkpoint_name}.ckpt"),
-            self.state,
+            self._checkpoint_state(),
         )
 
     def save_latest_checkpoint(self, state: Optional[Mapping] = None) -> None:
@@ -736,11 +873,9 @@ class Trainer:
             state: A mapping containing model, optimizer and lr scheduler.
 
         """
-        self.state.update(global_step=self.global_step, current_epoch=self.current_epoch)
-
         self.fabric.save(
             os.path.join(self.checkpoint_dir, "last.ckpt"),
-            self.state,
+            self._checkpoint_state(),
         )
 
     @staticmethod

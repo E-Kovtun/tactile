@@ -224,6 +224,8 @@ class BYOLModule(Module, nn.Module):
             assert len(moving_average_decay) == 2
             moving_average_decay = tuple(moving_average_decay)
         self.moving_average_decay = moving_average_decay
+        self._schedule_step = 0
+        self._schedule_total_steps = None
 
     def reset_moving_average(self):
         del self.target_encoder
@@ -244,6 +246,7 @@ class BYOLModule(Module, nn.Module):
                 update_moving_average(self.target_encoder, self.online_encoder, moving_average_decay)
         trainer_instance.writer.add_scalar("train/moving_average_decay", moving_average_decay, trainer_instance.global_step)
         self.log_on_batch_end(outputs, stage="train", trainer_instance=trainer_instance)
+        self._schedule_step += 1
 
     def on_validation_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         self.log_on_batch_end(outputs, stage="val", trainer_instance=trainer_instance)
@@ -374,14 +377,8 @@ class BYOLModule(Module, nn.Module):
             T_max=int(num_epochs * num_iterations_per_epoch),
             steps_per_epoch=num_iterations_per_epoch,
         )
-        if isinstance(self.moving_average_decay, tuple):
-            self.momentum_scheduler = (
-                self.moving_average_decay[0]
-                + i
-                * (self.moving_average_decay[1] - self.moving_average_decay[0])
-                / (num_epochs * num_iterations_per_epoch)
-                for i in range(int(num_epochs * num_iterations_per_epoch) + 1)
-            )
+        self._schedule_total_steps = int(num_epochs * num_iterations_per_epoch)
+        self._reset_momentum_schedule(0)
         if self.wd_scheduler_partial is None:
             return (
                 optimizer,
@@ -402,3 +399,31 @@ class BYOLModule(Module, nn.Module):
             {"scheduler": lr_scheduler, "interval": "step", "monitor": None},
             {"wd_scheduler": wd_scheduler, "interval": "step", "frequency": 1},
         )
+
+    def _reset_momentum_schedule(self, start_step: int) -> None:
+        if self._schedule_total_steps is None:
+            raise RuntimeError("Momentum schedule has not been configured")
+        if not 0 <= start_step <= self._schedule_total_steps:
+            raise RuntimeError("Invalid BYOL momentum schedule position")
+        self._schedule_step = start_step
+        if isinstance(self.moving_average_decay, tuple):
+            self.momentum_scheduler = (
+                self.moving_average_decay[0]
+                + i * (self.moving_average_decay[1] - self.moving_average_decay[0]) / self._schedule_total_steps
+                for i in range(start_step, self._schedule_total_steps + 1)
+            )
+
+    def get_checkpoint_state(self) -> Dict[str, Any]:
+        return {
+            "schedule_step": self._schedule_step,
+            "schedule_total_steps": self._schedule_total_steps,
+        }
+
+    def load_checkpoint_state(self, state, global_step: int, current_epoch: int) -> None:
+        if state is None:
+            start_step = global_step
+        else:
+            if int(state["schedule_total_steps"]) != self._schedule_total_steps:
+                raise RuntimeError("BYOL total schedule length changed since the checkpoint was created")
+            start_step = int(state["schedule_step"])
+        self._reset_momentum_schedule(start_step)

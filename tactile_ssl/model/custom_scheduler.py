@@ -51,19 +51,38 @@ class CosineWDSchedule(object):
         self.T_max = T_max
         self._step = 0.0
 
-    def step(self):
-        self._step += 1
+    def state_dict(self):
+        return {
+            "ref_weight_decay": self.ref_weight_decay,
+            "final_weight_decay": self.final_weight_decay,
+            "T_max": self.T_max,
+            "_step": self._step,
+        }
+
+    def load_state_dict(self, state_dict):
+        self.ref_weight_decay = state_dict["ref_weight_decay"]
+        self.final_weight_decay = state_dict["final_weight_decay"]
+        self.T_max = state_dict["T_max"]
+        self._step = state_dict["_step"]
+        self.apply_current_value()
+
+    def get_current_value(self):
         progress = self._step / self.T_max
         new_wd = self.final_weight_decay + (self.ref_weight_decay - self.final_weight_decay) * 0.5 * (
             1.0 + math.cos(math.pi * progress)
         )
 
         if self.final_weight_decay <= self.ref_weight_decay:
-            new_wd = max(self.final_weight_decay, new_wd)
-        else:
-            new_wd = min(self.final_weight_decay, new_wd)
+            return max(self.final_weight_decay, new_wd)
+        return min(self.final_weight_decay, new_wd)
 
+    def apply_current_value(self):
+        new_wd = self.get_current_value()
         for group in self.optimizer.param_groups:
             if ("WD_exclude" not in group) or not group["WD_exclude"]:
                 group["weight_decay"] = new_wd
         return new_wd
+
+    def step(self):
+        self._step += 1
+        return self.apply_current_value()
