@@ -108,7 +108,7 @@ def train(cfg: DictConfig):
     writer.close()
 
 
-@hydra.main(version_base="1.3", config_path="config", config_name="default.yaml")
+@hydra.main(version_base="1.3", config_path="config", config_name="default_task.yaml")
 def main(cfg: DictConfig):
     train(cfg)
 
