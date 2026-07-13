@@ -20,6 +20,31 @@ from tactile_ssl.utils.logging import get_pylogger
 log = get_pylogger(__name__)
 
 
+def gather_batch_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    """Gather tensors whose leading dimension may differ between DDP ranks."""
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return tensor
+
+    world_size = torch.distributed.get_world_size()
+    local_size = torch.tensor([tensor.shape[0]], device=tensor.device, dtype=torch.long)
+    sizes = [torch.zeros_like(local_size) for _ in range(world_size)]
+    torch.distributed.all_gather(sizes, local_size)
+    sizes = [int(size.item()) for size in sizes]
+    max_size = max(sizes)
+
+    if tensor.shape[0] < max_size:
+        padding = torch.zeros(
+            (max_size - tensor.shape[0], *tensor.shape[1:]),
+            device=tensor.device,
+            dtype=tensor.dtype,
+        )
+        tensor = torch.cat([tensor, padding], dim=0)
+
+    gathered = [torch.empty_like(tensor) for _ in range(world_size)]
+    torch.distributed.all_gather(gathered, tensor.contiguous())
+    return torch.cat([rank_tensor[:size] for rank_tensor, size in zip(gathered, sizes)], dim=0)
+
+
 class SLModule(Module, nn.Module):
     def __init__(
         self,

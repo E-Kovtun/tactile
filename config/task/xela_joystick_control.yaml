@@ -18,6 +18,8 @@ wandb:
   tags: ["${ssl_name}"]
 
 trainer:
+  # Reference Xela downstream runs use one GPU.
+  devices: 1
   max_epochs: 25
   validation_frequency: 5
   sanity_validate: true

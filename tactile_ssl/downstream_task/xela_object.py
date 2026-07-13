@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import torch.utils.data as data
 
 from tactile_ssl.utils.logging import get_pylogger
-from tactile_ssl.downstream_task.sl_module import SLModule
+from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.d360_sl import D360SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
 from tactile_ssl.model.layers import NestedTensorBlock as Block
@@ -49,7 +49,11 @@ class XelaObjectSLModule(SLModule):
         return self.model_encoder.forward_features(sensor_data)
 
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
-        if trainer_instance is not None and trainer_instance.should_log:
+        if (
+            trainer_instance is not None
+            and trainer_instance.fabric.is_global_zero
+            and trainer_instance.should_log
+        ):
             trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"].item(), step)
 
             metric = "batch_accuracy"
@@ -123,18 +127,21 @@ class XelaObjectSLModule(SLModule):
     def on_epoch_end(self, trainer_instance=None, stage="train"):
 
         if stage == "train":
-            target_gt = torch.cat(self.train_gt, dim=0).cpu().numpy()
-            target_pred = torch.cat(self.train_pred, dim=0).cpu().numpy()
+            target_gt = torch.cat(self.train_gt, dim=0)
+            target_pred = torch.cat(self.train_pred, dim=0)
         elif stage == "val":
-            target_gt = torch.cat(self.val_gt, dim=0).cpu().numpy()
-            target_pred = torch.cat(self.val_pred, dim=0).cpu().numpy()
+            target_gt = torch.cat(self.val_gt, dim=0)
+            target_pred = torch.cat(self.val_pred, dim=0)
+
+        target_gt = gather_batch_tensor(target_gt).cpu().numpy()
+        target_pred = gather_batch_tensor(target_pred).cpu().numpy()
 
         epoch_accuracy = (target_pred == target_gt).mean()
 
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
         epoch = trainer_instance.current_epoch
 
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             trainer_instance.writer.add_scalar(f"{stage}/accuracy", epoch_accuracy, epoch)
          
         if stage == "train":
@@ -148,9 +155,9 @@ class XelaObjectSLModule(SLModule):
 
     def on_test_end(self, trainer_instance=None, stage="test"):
 
-        target_gt = torch.cat(self.test_gt, dim=0).cpu().numpy()
-        target_pred = torch.cat(self.test_pred, dim=0).cpu().numpy()
+        target_gt = gather_batch_tensor(torch.cat(self.test_gt, dim=0)).cpu().numpy()
+        target_pred = gather_batch_tensor(torch.cat(self.test_pred, dim=0)).cpu().numpy()
 
         test_accuracy = (target_pred == target_gt).mean()
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             trainer_instance.writer.add_scalar(f"{stage}/accuracy", test_accuracy, 0)

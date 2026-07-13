@@ -14,6 +14,8 @@ hydra:
 run_name:  transformer_${now:%Y.%m.%d}_${now:%H-%M}
 
 trainer:
+  # Reference Xela downstream runs use one GPU.
+  devices: 1
   max_epochs: 25
   validation_frequency: 1
   sanity_validate: true

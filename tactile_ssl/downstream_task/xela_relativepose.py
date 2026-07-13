@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torch.utils.data as data
 
 from tactile_ssl.utils.logging import get_pylogger
-from tactile_ssl.downstream_task.sl_module import SLModule
+from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
@@ -264,7 +264,11 @@ class XelaRelativePoseModule(SLModule):
         return self.step(batch, batch_idx)
 
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
-        if trainer_instance is not None and trainer_instance.should_log:
+        if (
+            trainer_instance is not None
+            and trainer_instance.fabric.is_global_zero
+            and trainer_instance.should_log
+        ):
             trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"], step)
             metric = "batch_rmse"
             trainer_instance.writer.add_scalar(f"{label}/{metric}_x", outputs[f"{metric}"][0].item(), step)
@@ -299,11 +303,14 @@ class XelaRelativePoseModule(SLModule):
         target_std = self.target_std.cpu().numpy()
 
         if stage == "train":
-            target_gt = torch.cat(self.train_gt, dim=0).cpu().numpy()
-            target_pred = torch.cat(self.train_pred, dim=0).cpu().numpy()
+            target_gt = torch.cat(self.train_gt, dim=0)
+            target_pred = torch.cat(self.train_pred, dim=0)
         elif stage == "val":
-            target_gt = torch.cat(self.val_gt, dim=0).cpu().numpy()
-            target_pred = torch.cat(self.val_pred, dim=0).cpu().numpy()
+            target_gt = torch.cat(self.val_gt, dim=0)
+            target_pred = torch.cat(self.val_pred, dim=0)
+
+        target_gt = gather_batch_tensor(target_gt).cpu().numpy()
+        target_pred = gather_batch_tensor(target_pred).cpu().numpy()
 
         if self.model_task.discretize is not None:
             lower_bound = target_mean - 2 * target_std
@@ -358,7 +365,7 @@ class XelaRelativePoseModule(SLModule):
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
         epoch = trainer_instance.current_epoch
 
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             # trainer_instance.wandb.log(
             #     {
             #         f"{stage}/outputs": [wandb.Image(fig) for fig in figs],
@@ -382,8 +389,8 @@ class XelaRelativePoseModule(SLModule):
 
     def on_test_end(self, trainer_instance=None, stage="test"):
 
-        relative_pose_gt = torch.cat(self.test_gt, dim=0).cpu().numpy()
-        relative_pose_pred = torch.cat(self.test_pred, dim=0).cpu().numpy()
+        relative_pose_gt = gather_batch_tensor(torch.cat(self.test_gt, dim=0)).cpu().numpy()
+        relative_pose_pred = gather_batch_tensor(torch.cat(self.test_pred, dim=0)).cpu().numpy()
             
         rmse = np.sqrt(np.mean((relative_pose_gt - relative_pose_pred) ** 2))
         rmse_x = np.sqrt(np.mean((relative_pose_gt[:, :, 0] - relative_pose_pred[:, :, 0]) ** 2))
@@ -397,8 +404,9 @@ class XelaRelativePoseModule(SLModule):
         auc_theta_1deg = np.mean(np.abs(relative_pose_gt[..., 2] - relative_pose_pred[..., 2]) < theta_threshold) 
 
 
-        for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_theta], ["", "_x", "_y", "_theta"])):
-            trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, 0)
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
+            for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_theta], ["", "_x", "_y", "_theta"])):
+                trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, 0)
 
-        for i, (auc_val, axis) in enumerate(zip([auc_x_1mm, auc_y_1mm, auc_theta_1deg], ["_x", "_y", "_theta"])):
-            trainer_instance.writer.add_scalar(f"{stage}/acc{axis}", auc_val, 0)
+            for i, (auc_val, axis) in enumerate(zip([auc_x_1mm, auc_y_1mm, auc_theta_1deg], ["_x", "_y", "_theta"])):
+                trainer_instance.writer.add_scalar(f"{stage}/acc{axis}", auc_val, 0)

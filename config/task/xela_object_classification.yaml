@@ -14,6 +14,8 @@ hydra:
     dir: ${paths.log_dir}/${experiment_name}/${run_name}_${hydra.job.id}
 
 trainer:
+  # Reference Xela downstream runs use one GPU.
+  devices: 1
   max_epochs: 100
   validation_frequency: 1 
   sanity_validate: true

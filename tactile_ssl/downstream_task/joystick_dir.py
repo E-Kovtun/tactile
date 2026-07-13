@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tactile_ssl.utils.logging import get_pylogger
-from tactile_ssl.downstream_task.sl_module import SLModule
+from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
@@ -146,7 +146,7 @@ class XelaJoystickSLModule(SLModule):
         return self.model_encoder.forward_features(sensor_data)
     
     def on_fit_start(self, train_dataloader=None, val_dataloader=None, trainer_instance=None):
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             trainer_instance.wandb.define_metric("train/loss", summary="min")
             trainer_instance.wandb.define_metric("train/rmse", summary="min")
             trainer_instance.wandb.define_metric("train/rmse_x", summary="min")
@@ -209,7 +209,11 @@ class XelaJoystickSLModule(SLModule):
         return self.training_step(batch, batch_idx)
 
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
-        if trainer_instance is not None and trainer_instance.should_log:
+        if (
+            trainer_instance is not None
+            and trainer_instance.fabric.is_global_zero
+            and trainer_instance.should_log
+        ):
             trainer_instance.wandb.log(
                 {
                     f"{label}/loss": outputs["loss"],
@@ -259,11 +263,14 @@ class XelaJoystickSLModule(SLModule):
         joystick_gt = None
         joystick_pred = None
         if stage == "train":
-            joystick_gt = torch.cat(self.train_gt, dim=0).cpu().numpy()
-            joystick_pred = torch.cat(self.train_pred, dim=0).cpu().numpy()
+            joystick_gt = torch.cat(self.train_gt, dim=0)
+            joystick_pred = torch.cat(self.train_pred, dim=0)
         elif stage == "val":
-            joystick_gt = torch.cat(self.val_gt, dim=0).cpu().numpy()
-            joystick_pred = torch.cat(self.val_pred, dim=0).cpu().numpy()
+            joystick_gt = torch.cat(self.val_gt, dim=0)
+            joystick_pred = torch.cat(self.val_pred, dim=0)
+
+        joystick_gt = gather_batch_tensor(joystick_gt).cpu().numpy()
+        joystick_pred = gather_batch_tensor(joystick_pred).cpu().numpy()
 
         if self.model_task.discretize is not None:
             lower_bound = float(self.model_task.discretize.lower_bound)
@@ -328,7 +335,7 @@ class XelaJoystickSLModule(SLModule):
 
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
 
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             trainer_instance.wandb.log(
                 {
                     f"{stage}/outputs": [wandb.Image(fig) for fig in figs],
