@@ -14,8 +14,7 @@ hydra:
 run_name:  transformer_${now:%Y.%m.%d}_${now:%H-%M}
 
 trainer:
-  # Reference Xela downstream runs use one GPU.
-  devices: 1
+  devices: 4
   max_epochs: 25
   validation_frequency: 1
   sanity_validate: true
@@ -30,6 +29,9 @@ trainer:
 
 
 data:
+  # 4 devices x 4 samples preserves the reference global train batch of 16.
+  train_dataloader:
+    batch_size: 4
   dataset:
     config:
       train_data_budget: ${train_data_budget}

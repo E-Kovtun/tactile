@@ -160,7 +160,11 @@ class ForceSLModule(SLModule):
         return self.training_step(batch, batch_idx)
 
     def log_metrics(self, outputs, step, trainer_instance=None, label="train"):
-        if trainer_instance is not None and trainer_instance.should_log:
+        if (
+            trainer_instance is not None
+            and trainer_instance.fabric.is_global_zero
+            and trainer_instance.should_log
+        ):
             trainer_instance.writer.add_scalar(f"{label}/loss", outputs["loss"], step)
 
             metric = "batch_rmse"
