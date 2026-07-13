@@ -532,6 +532,24 @@ class XelaForceSLModule(ForceSLModule):
         if graph_info is not None and getattr(self.model_encoder, "supports_graph_info", False):
             return self.model_encoder.forward_features(sensor_data, graph_info=graph_info)
         return self.model_encoder.forward_features(sensor_data)
+
+    @staticmethod
+    def _global_rmse(forces_gt: torch.Tensor, forces_pred: torch.Tensor):
+        squared_error = (forces_gt - forces_pred).double().square()
+        squared_error_sum = squared_error.sum(dim=0)
+        sample_count = torch.tensor(
+            forces_gt.shape[0],
+            device=forces_gt.device,
+            dtype=torch.float64,
+        )
+
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(squared_error_sum, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(sample_count, op=torch.distributed.ReduceOp.SUM)
+
+        rmse_axes = torch.sqrt(squared_error_sum / sample_count)
+        rmse = torch.sqrt(squared_error_sum.sum() / (sample_count * squared_error_sum.numel()))
+        return rmse, rmse_axes
     
     def on_fit_start(self, train_dataloader=None, val_dataloader=None, trainer_instance=None):
         self.init_stats(train_dataloader, trainer_instance.fabric.device)
@@ -642,23 +660,21 @@ class XelaForceSLModule(ForceSLModule):
         target_pred = None
 
         if stage == "train":
-            target_gt = torch.cat(self.train_gt, dim=0).cpu().numpy()
-            target_pred = torch.cat(self.train_pred, dim=0).cpu().numpy()
+            target_gt = torch.cat(self.train_gt, dim=0)
+            target_pred = torch.cat(self.train_pred, dim=0)
         elif stage == "val":
-            target_gt = torch.cat(self.val_gt, dim=0).cpu().numpy()
-            target_pred = torch.cat(self.val_pred, dim=0).cpu().numpy()
+            target_gt = torch.cat(self.val_gt, dim=0)
+            target_pred = torch.cat(self.val_pred, dim=0)
 
         forces_gt = target_gt
         forces_pred = target_pred
 
         if self.only_normal_force:
-            forces_pred = np.repeat(forces_pred, 3, axis=1)
-            forces_pred[:,0:2] = 0.0
+            forces_pred = forces_pred.repeat(1, 3)
+            forces_pred[:, 0:2] = 0.0
             
-        rmse = np.sqrt(np.mean((forces_gt - forces_pred) ** 2))
-        rmse_x = np.sqrt(np.mean((forces_gt[:, 0] - forces_pred[:, 0]) ** 2))
-        rmse_y = np.sqrt(np.mean((forces_gt[:, 1] - forces_pred[:, 1]) ** 2))
-        rmse_z = np.sqrt(np.mean((forces_gt[:, 2] - forces_pred[:, 2]) ** 2))
+        rmse, rmse_axes = self._global_rmse(forces_gt, forces_pred)
+        rmse_x, rmse_y, rmse_z = rmse_axes
 
         if self.only_normal_force:
             rmse_x = 1000.0
@@ -670,7 +686,7 @@ class XelaForceSLModule(ForceSLModule):
         step = trainer_instance.global_step if stage=="train" else trainer_instance.global_val_step
         epoch = trainer_instance.current_epoch
 
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_z], ["", "_x", "_y", "_z"])):
                 trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, epoch)
          
@@ -693,22 +709,20 @@ class XelaForceSLModule(ForceSLModule):
 
     def on_test_end(self, trainer_instance=None, stage="test"):
 
-        forces_gt = torch.cat(self.test_gt, dim=0).cpu().numpy()
-        forces_pred = torch.cat(self.test_pred, dim=0).cpu().numpy()
+        forces_gt = torch.cat(self.test_gt, dim=0)
+        forces_pred = torch.cat(self.test_pred, dim=0)
 
         if self.only_normal_force:
-            forces_pred = np.repeat(forces_pred, 3, axis=1)
-            forces_pred[:,0:2] = 0.0
+            forces_pred = forces_pred.repeat(1, 3)
+            forces_pred[:, 0:2] = 0.0
             
-        rmse = np.sqrt(np.mean((forces_gt - forces_pred) ** 2))
-        rmse_x = np.sqrt(np.mean((forces_gt[:, 0] - forces_pred[:, 0]) ** 2))
-        rmse_y = np.sqrt(np.mean((forces_gt[:, 1] - forces_pred[:, 1]) ** 2))
-        rmse_z = np.sqrt(np.mean((forces_gt[:, 2] - forces_pred[:, 2]) ** 2))
+        rmse, rmse_axes = self._global_rmse(forces_gt, forces_pred)
+        rmse_x, rmse_y, rmse_z = rmse_axes
 
         if self.only_normal_force:
             rmse_x = 1000.0
             rmse_y = 1000.0
 
-        if trainer_instance is not None:
+        if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_z], ["", "_x", "_y", "_z"])):
                 trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, 0)
