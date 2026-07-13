@@ -66,6 +66,9 @@ class Report:
         self._fh.write(text + "\n")
         self._fh.flush()
 
+    def progress(self, text: str) -> None:
+        self.line(f"[PROGRESS] {time.strftime('%H:%M:%S')} {text}")
+
     def section(self, title: str) -> None:
         self.line()
         self.line("=" * 100)
@@ -267,6 +270,19 @@ def find_downstream_episode(data_root: Path, task_dir: str, stage: str, explicit
     return dirs[0] if dirs else None
 
 
+def resolve_force_baseline_and_urdf(data_root: Path) -> tuple[Path, Path]:
+    baseline_candidates = [
+        data_root / "downstream_tasks/force_estimation/base_line_fremont_hand/xela/data.pkl",
+    ]
+    urdf_candidates = [
+        data_root / "xela/pretraining/extracted/urdf/ahrcpcpn.urdf",
+        data_root / "pretraining/urdf/ahrcpcpn.urdf",
+    ]
+    baseline = next((path for path in baseline_candidates if path.exists()), baseline_candidates[0])
+    urdf = next((path for path in urdf_candidates if path.exists()), urdf_candidates[0])
+    return baseline, urdf
+
+
 def legacy_sensor_positions(joint_poses: np.ndarray) -> np.ndarray:
     import einops
     from scipy.spatial.transform import Rotation as R
@@ -290,6 +306,115 @@ def legacy_sensor_positions(joint_poses: np.ndarray) -> np.ndarray:
         sensor_pose = np.einsum("m i j, m j -> m i", transform, sensor_positions)
         joint_sensor_poses.append(sensor_pose[..., :3].reshape(joint_poses.shape[1], num_sensors, 3))
     return np.concatenate(joint_sensor_poses, axis=1).astype(np.float32)
+
+
+def legacy_force_episode(
+    data_path: Path,
+    baseline_signal_path: Path | None,
+    urdf_path: Path,
+    cfg: Any,
+) -> dict[str, np.ndarray]:
+    import einops
+    import pytorch_kinematics as pk
+    from tactile_ssl.data.xela.utils import (
+        compute_interp_timestamps,
+        joint_angles_to_poses,
+        read_allegro_joint_data,
+        read_force_data,
+        read_xela_data,
+    )
+
+    skin_data = np.asarray(load_pickle(data_path / "xela/data.pkl"))
+    skin_force_data = np.asarray(load_pickle(data_path / "xela/forces.pkl"))
+    allegro_path = data_path / "allegro/data.pkl"
+    force_data = np.asarray(load_pickle(data_path / "data.pkl")["force"])
+
+    if not allegro_path.exists():
+        allegro_joint_state = np.array(
+            [
+                [
+                    3.76105724e-01,
+                    -2.54875702e-01,
+                    -2.64896910e-01,
+                    -1.27969950e-01,
+                    5.00173611e-02,
+                    -2.60374064e-01,
+                    -2.85205378e-01,
+                    -2.55141751e-01,
+                    -1.27792584e-01,
+                    -2.41839262e-01,
+                    -2.57092783e-01,
+                    4.34902728e-01,
+                    2.60994847e-01,
+                    -3.90028996e-01,
+                    1.50069820e00,
+                    3.44889215e-01,
+                    -8.17324002e-04,
+                    -1.05262663e-03,
+                    4.13282548e-03,
+                    -8.95508305e-03,
+                    6.96885109e-02,
+                    1.30731142e-03,
+                    2.55328768e-03,
+                    5.62274925e-02,
+                    5.00000000e-01,
+                    4.12439429e-03,
+                    -1.48203024e-02,
+                    -5.00000000e-01,
+                    5.62450390e-04,
+                    2.74799718e-07,
+                    -1.74512554e-02,
+                    -1.01071438e-03,
+                ]
+            ]
+        )
+        allegro_data = np.repeat(allegro_joint_state, len(skin_data), axis=0)
+        allegro_data = np.hstack((skin_data[:, 0, 0].reshape(-1, 1), allegro_data))
+    else:
+        allegro_data = np.asarray(load_pickle(allegro_path)["joint_states"])
+
+    timestamps, _ = compute_interp_timestamps(
+        [skin_data[:, 0, 0], allegro_data[:, 0], force_data[:, 0]], cfg.interpolating_freq
+    )
+    xela_array, xela_force_array = read_xela_data(
+        skin_data,
+        timestamps,
+        cfg.interpolating_freq,
+        False,
+        skin_force_data,
+    )
+    joint_angles, _ = read_allegro_joint_data(allegro_data, timestamps, cfg.interpolating_freq, False)
+    chain = pk.build_chain_from_urdf(urdf_path.read_text())
+    sensor_positions = joint_angles_to_poses(chain, joint_angles)
+
+    baseline = None
+    if baseline_signal_path is not None and baseline_signal_path.exists() and cfg.subtract_baseline:
+        baseline_signal = np.asarray(load_pickle(baseline_signal_path))
+        baseline = np.mean(baseline_signal[:, :, 1:], axis=0)
+        mask = xela_array[:, ..., 1] != 0
+        baseline_t = einops.repeat(baseline, "k c -> b k c", b=xela_array.shape[0])
+        xela_array[mask, 1:] = xela_array[mask, 1:] - baseline_t[mask, :]
+
+    xela_array = xela_array[..., 1:]
+    if bool(cfg.features.use_spatial_coords):
+        xela_array = np.concatenate([xela_array, sensor_positions], axis=-1)
+
+    _, gt_force_data = read_force_data(
+        force_data,
+        timestamps,
+        max_abs_forceXYZ=[1.0, 1.0, 1.0],
+        nominal_freq=cfg.interpolating_freq,
+    )
+    max_force_length = min(len(gt_force_data), len(xela_array))
+    return {
+        "xela_array": xela_array[:max_force_length],
+        "xela_force_array": xela_force_array[:max_force_length],
+        "force_data": gt_force_data[:max_force_length, 1:],
+        "timestamps": timestamps[:max_force_length],
+        "sensor_positions": sensor_positions[:max_force_length],
+        "num_frames": np.asarray(max_force_length, dtype=np.int64),
+        "baseline_mean": np.asarray([] if baseline is None else baseline, dtype=np.float32),
+    }
 
 
 def legacy_pretrain_episode(
@@ -362,6 +487,7 @@ def compare_pretrain(data_root: Path, args: argparse.Namespace, report: Report, 
     from tactile_ssl.data.xela.preprocessing import compute_xela_normalization_from_arrays, load_cached_xela_sequence
 
     report.section("Pretrain Xela Pipeline")
+    report.progress("pretrain: resolving diagnostic episode")
     episode = find_pretrain_episode(data_root, args.pretrain_sequence, args.pretrain_id)
     if episode is None:
         report.line("SKIP: no pretrain episode found")
@@ -377,12 +503,15 @@ def compare_pretrain(data_root: Path, args: argparse.Namespace, report: Report, 
         return
 
     cfg = make_cfg(cache_root, cache_enabled=True, force_recompute=True, use_spatial_coords=True)
+    report.progress("pretrain: computing legacy episode")
     legacy = legacy_pretrain_episode(episode, baseline, urdf, cfg)
 
+    report.progress("pretrain: computing cached episode with force_recompute=true")
     cache = ArtifactCache(root=str(cache_root), enabled=True, force_recompute=True, log_hits=True)
     cached = load_cached_xela_sequence(cache, cfg, str(episode), str(urdf), str(baseline))
 
     for key in ["timestamps", "xela_array", "joint_angles", "joint_effort", "joint_poses", "sensor_positions"]:
+        report.progress(f"pretrain: comparing {key}")
         summarize_array(f"legacy.{key}", legacy[key], report)
         summarize_array(f"cached.{key}", cached[key], report)
         compare_arrays(f"pretrain.{key}", legacy[key], cached[key], report)
@@ -403,6 +532,7 @@ def compare_pretrain(data_root: Path, args: argparse.Namespace, report: Report, 
         report,
     )
 
+    report.progress("pretrain: comparing normalization formulas")
     legacy_norm = normalization_legacy([legacy["xela_array"]])
     cached_norm = compute_xela_normalization_from_arrays([cached["xela_array"]])
     new_norm_on_legacy = compute_xela_normalization_from_arrays([legacy["xela_array"]])
@@ -440,6 +570,7 @@ def compare_pretrain(data_root: Path, args: argparse.Namespace, report: Report, 
         report,
     )
 
+    report.progress("pretrain: validating warm cache hit")
     cached_hit = ArtifactCache(root=str(cache_root), enabled=True, force_recompute=False, log_hits=True)
     cached_again = load_cached_xela_sequence(cached_hit, cfg, str(episode), str(urdf), str(baseline))
     compare_arrays("pretrain.cache_hit.xela_array", cached["xela_array"], cached_again["xela_array"], report)
@@ -458,6 +589,7 @@ def normalization_legacy(arrays: list[np.ndarray]) -> dict[str, np.ndarray]:
 
 def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cache_root: Path) -> None:
     report.section("Force Downstream Pipeline")
+    report.progress("force: resolving diagnostic episode")
     episode = find_downstream_episode(data_root, "force_estimation", args.force_stage, args.force_episode)
     if episode is None:
         report.line("SKIP: no force episode found")
@@ -470,8 +602,7 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         xela_force_module, "_load_force_episode_uncached"
     )
 
-    baseline = data_root / "downstream_tasks/force_estimation/base_line_fremont_hand/xela/data.pkl"
-    urdf = data_root / "xela/pretraining/extracted/urdf/ahrcpcpn.urdf"
+    baseline, urdf = resolve_force_baseline_and_urdf(data_root)
     report.kv("episode", episode)
     report.kv("baseline", baseline)
     report.kv("urdf", urdf)
@@ -497,18 +628,29 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         "num_workers": 0,
     }
 
+    report.progress("force: computing legacy episode")
+    legacy = legacy_force_episode(episode, baseline, urdf, cfg)
+    report.line("legacy force episode: computed")
+    for key in ["xela_array", "xela_force_array", "force_data", "timestamps", "sensor_positions", "num_frames"]:
+        summarize_array(f"force.legacy.{key}", legacy[key], report)
+
     if has_episode_helpers:
         report.line("force episode helpers: available")
+        report.progress("force: computing current uncached episode")
         uncached = xela_force_module._load_force_episode_uncached(str(episode), str(urdf), str(baseline), params)
+        report.progress("force: computing current cached episode with force_recompute=true")
         cached = xela_force_module._load_cached_force_episode(
             (str(episode), str(urdf), str(baseline), params, cache_config)
         )
-        for key in ["xela_array", "xela_force_array", "force_data", "timestamps", "num_frames"]:
+        for key in ["xela_array", "xela_force_array", "force_data", "timestamps", "sensor_positions", "num_frames"]:
+            report.progress(f"force: comparing legacy/current/cache {key}")
             summarize_array(f"force.uncached.{key}", uncached[key], report)
             summarize_array(f"force.cached.{key}", cached[key], report)
+            compare_arrays(f"force.legacy_vs_uncached.{key}", legacy[key], uncached[key], report)
             compare_arrays(f"force.{key}", uncached[key], cached[key], report)
 
         cache_config["force_recompute"] = False
+        report.progress("force: validating warm cache hit")
         cached_again = xela_force_module._load_cached_force_episode(
             (str(episode), str(urdf), str(baseline), params, cache_config)
         )
@@ -521,10 +663,13 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
 
     cfg_uncached = make_cfg(cache_root, cache_enabled=False, force_recompute=False, use_spatial_coords=True)
     cfg_cached = make_cfg(cache_root, cache_enabled=True, force_recompute=False, use_spatial_coords=True)
+    report.progress("force: building ForceDataset with cache disabled")
     dset_uncached = ForceDataset(cfg_uncached, [episode], str(urdf), str(baseline))
+    report.progress("force: building ForceDataset with cache enabled")
     dset_cached = ForceDataset(cfg_cached, [episode], str(urdf), str(baseline))
     report.kv("force.dataset.len.uncached", len(dset_uncached))
     report.kv("force.dataset.len.cached", len(dset_cached))
+    report.progress("force: comparing ForceDataset arrays")
     compare_arrays("force.dataset.xela_array", dset_uncached.xela_array, dset_cached.xela_array, report)
     compare_arrays("force.dataset.force_data", dset_uncached.force_data, dset_cached.force_data, report)
     compare_arrays("force.dataset.timestamps", dset_uncached.timestamps, dset_cached.timestamps, report)
@@ -533,6 +678,7 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
         for idx in [0, min(len(dset_uncached), len(dset_cached)) // 2, min(len(dset_uncached), len(dset_cached)) - 1]:
             if idx < 0:
                 continue
+            report.progress(f"force: comparing sample {idx}")
             left = dset_uncached[idx]
             right = dset_cached[idx]
             for key in ["timestamp", "sensor", "sensor_force", "force"]:
@@ -541,6 +687,7 @@ def compare_force(data_root: Path, args: argparse.Namespace, report: Report, cac
 
 def compare_relative_pose(data_root: Path, args: argparse.Namespace, report: Report, cache_root: Path) -> None:
     report.section("Relative Pose Downstream Pipeline")
+    report.progress("relative_pose: resolving diagnostic episode")
     episode = find_downstream_episode(data_root, "relative_pose_estimation", args.relative_pose_stage, args.relative_pose_episode)
     if episode is None:
         report.line("SKIP: no relative pose episode found")
@@ -580,9 +727,12 @@ def compare_relative_pose(data_root: Path, args: argparse.Namespace, report: Rep
         "log_hits": True,
         "num_workers": 0,
     }
+    report.progress("relative_pose: computing current uncached episode")
     uncached = _load_relative_pose_episode_uncached(str(episode), str(urdf), str(baseline), params)
+    report.progress("relative_pose: computing current cached episode with force_recompute=true")
     cached = _load_cached_relative_pose_episode((str(episode), str(urdf), str(baseline), params, cache_config))
     for key in ["xela_array", "relative_pose_data", "relative_pose_planar", "timestamps", "num_frames"]:
+        report.progress(f"relative_pose: comparing {key}")
         summarize_array(f"relative_pose.uncached.{key}", uncached[key], report)
         summarize_array(f"relative_pose.cached.{key}", cached[key], report)
         compare_arrays(f"relative_pose.{key}", uncached[key], cached[key], report)
