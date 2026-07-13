@@ -175,11 +175,11 @@ class XelaGAT(nn.Module):
         super().__init__()
 
         if normalization is not None:
-            self.register_buffer("xela_mean", torch.tensor(normalization.mean))
-            self.register_buffer("xela_std", torch.tensor(normalization.std))
+            self.register_buffer("xela_mean", torch.as_tensor(normalization.mean, dtype=torch.float32))
+            self.register_buffer("xela_std", torch.as_tensor(normalization.std, dtype=torch.float32))
         else:
-            self.register_buffer("xela_mean", torch.tensor([0, 0, 0]))
-            self.register_buffer("xela_std", torch.tensor([1, 1, 1]))
+            self.register_buffer("xela_mean", torch.zeros(self.signal_chans, dtype=torch.float32))
+            self.register_buffer("xela_std", torch.ones(self.signal_chans, dtype=torch.float32))
         print(f"Xela mean: {self.xela_mean}, Xela std: {self.xela_std}")
 
         self.patch_embed = PatchEmbed1d(

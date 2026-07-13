@@ -40,11 +40,11 @@ class XelaLinear(nn.Module):
         super().__init__()
 
         if normalization is not None:
-            self.register_buffer("xela_mean", torch.tensor(normalization.mean))
-            self.register_buffer("xela_std", torch.tensor(normalization.std))
+            self.register_buffer("xela_mean", torch.as_tensor(normalization.mean, dtype=torch.float32))
+            self.register_buffer("xela_std", torch.as_tensor(normalization.std, dtype=torch.float32))
         else:
-            self.register_buffer("xela_mean", torch.tensor([0, 0, 0]))
-            self.register_buffer("xela_std", torch.tensor([1, 1, 1]))
+            self.register_buffer("xela_mean", torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32))
+            self.register_buffer("xela_std", torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32))
         print(f"Xela mean: {self.xela_mean}, Xela std: {self.xela_std}")
         self.patch_embed = PatchEmbed1d(
             modal_chans=in_chans,
@@ -261,5 +261,4 @@ class XelaLinear(nn.Module):
     def forward(self, x, masks=None, mask_type=None, masktoken_masks=None):
         out = self.forward_features(x, masks, mask_type, masktoken_masks)
         return self.head(out["x_norm_patchtokens"])
-
 

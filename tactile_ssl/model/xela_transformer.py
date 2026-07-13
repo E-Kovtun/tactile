@@ -82,11 +82,11 @@ class XelaTransformer(SignalTransformer):
         )
 
         if normalization is not None:
-            self.register_buffer("xela_mean", torch.tensor(normalization.mean))
-            self.register_buffer("xela_std", torch.tensor(normalization.std))
+            self.register_buffer("xela_mean", torch.as_tensor(normalization.mean, dtype=torch.float32))
+            self.register_buffer("xela_std", torch.as_tensor(normalization.std, dtype=torch.float32))
         else:
-            self.register_buffer("xela_mean", torch.tensor([0, 0, 0]))
-            self.register_buffer("xela_std", torch.tensor([1, 1, 1]))
+            self.register_buffer("xela_mean", torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32))
+            self.register_buffer("xela_std", torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32))
         print(f"Xela mean: {self.xela_mean}, Xela std: {self.xela_std}")
         self.patch_embed = PatchEmbed1d(
             modal_chans=in_chans,
