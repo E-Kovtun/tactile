@@ -33,6 +33,7 @@ preprocessing:
   outlier_max: 60000
   timestamp_policy: overlap_minmax_v1
   baseline_policy: mean_over_all_baseline_frames_v1
+  numeric_policy: legacy_float64_v1
 
 features:
   use_spatial_coords: false

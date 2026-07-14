@@ -24,7 +24,12 @@ from tactile_ssl.graph.builders import build_sensor_graph
 def compute_baseline_mean(baseline_signal_path: str):
     with open(baseline_signal_path, "rb") as f:
         baseline_signal = np.asarray(pickle.load(f))
-    return {"baseline_mean": np.mean(baseline_signal[:, :, 1:], axis=0).astype(np.float32)}
+    # Preserve the legacy preprocessing contract: baseline subtraction used to
+    # happen in the source array dtype (float64 for the Xela pretrain data).
+    # Rounding the mean to float32 before subtraction changes nearly every
+    # residual and can also create additional exact zeros, which are excluded
+    # from the normalization statistics.
+    return {"baseline_mean": np.mean(baseline_signal[:, :, 1:], axis=0)}
 
 
 def compute_xela_interpolated(
@@ -48,7 +53,10 @@ def compute_xela_interpolated(
 
     return {
         "timestamps": timestamps.astype(np.float64),
-        "xela_array": xela_processed[..., 1:].astype(np.float32),
+        # Keep the interpolated, baseline-subtracted signal in float64 until
+        # dataset __getitem__, matching the original XelaSSLDataset. The model
+        # input is still converted to torch.float32 there.
+        "xela_array": xela_processed[..., 1:],
     }
 
 
@@ -173,10 +181,10 @@ def compute_cached_xela_normalization(xela_datasets: list, per_sensor: bool = Fa
     }
     spec = CacheSpec(
         artifact="xela_normalization",
-        schema_version=2,
+        schema_version=3,
         semantic_params={
             "per_sensor": per_sensor,
-            "normalization_policy": "legacy_zero_as_nan_float64_streaming_v1",
+            "normalization_policy": "legacy_source_dtype_zero_as_nan_streaming_v2",
             "train_sequences": list(sequence_keys.keys()),
         },
         producer_functions=(compute_xela_normalization_from_arrays,),
@@ -333,6 +341,7 @@ def build_preprocessing_contract(config) -> dict:
         "baseline_policy": str(
             preprocessing_cfg.get("baseline_policy", "mean_over_all_baseline_frames_v1")
         ),
+        "numeric_policy": str(preprocessing_cfg.get("numeric_policy", "legacy_float64_v1")),
     }
 
 
@@ -362,7 +371,7 @@ def load_cached_xela_sequence(
     if baseline_signal_path is not None and preprocessing_contract["subtract_baseline"]:
         baseline_spec = CacheSpec(
             artifact="baseline_mean",
-            schema_version=1,
+            schema_version=2,
             semantic_params={
                 "baseline": file_fingerprint(baseline_signal_path),
                 "baseline_policy": preprocessing_contract["baseline_policy"],
@@ -393,7 +402,7 @@ def load_cached_xela_sequence(
 
     xela_spec = CacheSpec(
         artifact="xela_array",
-        schema_version=1,
+        schema_version=2,
         semantic_params={
             "xela": file_fingerprint(str(xela_file)),
             "allegro": file_fingerprint(str(allegro_file)),
