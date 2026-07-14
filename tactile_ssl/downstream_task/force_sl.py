@@ -107,7 +107,7 @@ class ForceSLModule(SLModule):
         checkpoint_task: Optional[str] = None,
         train_encoder: bool = False,
         encoder_type: str = "jepa",
-        encoder_normalization_override: Optional[Dict[str, Any]] = None,
+        encoder_normalization_float32: bool = False,
     ):
         super().__init__(
             model_encoder=model_encoder,
@@ -118,7 +118,7 @@ class ForceSLModule(SLModule):
             checkpoint_task=checkpoint_task,
             train_encoder=train_encoder,
             encoder_type=encoder_type,
-            encoder_normalization_override=encoder_normalization_override,
+            encoder_normalization_float32=encoder_normalization_float32,
         )
         self.val_pred = []
         self.val_gt = []

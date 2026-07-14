@@ -9,7 +9,7 @@
 
 
 from functools import partial
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -56,7 +56,7 @@ class SLModule(Module, nn.Module):
         checkpoint_task: Optional[str] = None,
         train_encoder: bool = False,
         encoder_type: str = "jepa",
-        encoder_normalization_override: Optional[Mapping[str, Any]] = None,
+        encoder_normalization_float32: bool = False,
     ) -> None:
         super().__init__()
         self.model_task: nn.Module = model_task
@@ -74,8 +74,7 @@ class SLModule(Module, nn.Module):
             log.info("Loading task decoder from checkpoint.")
             self.load_task(checkpoint_task)
 
-        if encoder_normalization_override is not None:
-            self._override_encoder_normalization(encoder_normalization_override)
+        self._configure_encoder_normalization(encoder_normalization_float32)
 
         # freeze encoder
         if not self.train_encoder:
@@ -84,31 +83,26 @@ class SLModule(Module, nn.Module):
         self.scheduler_partial = scheduler_cfg
         self.optim_partial = optim_cfg
 
-    def _override_encoder_normalization(self, normalization: Mapping[str, Any]) -> None:
+    def _configure_encoder_normalization(self, use_float32: bool) -> None:
         if not hasattr(self.model_encoder, "xela_mean") or not hasattr(self.model_encoder, "xela_std"):
-            raise ValueError("Encoder normalization override requires xela_mean and xela_std buffers")
-        if "mean" not in normalization or "std" not in normalization:
-            raise ValueError("Encoder normalization override requires both mean and std")
+            return
 
-        current_mean = self.model_encoder.xela_mean
-        current_std = self.model_encoder.xela_std
-        mean = torch.as_tensor(normalization["mean"], device=current_mean.device, dtype=current_mean.dtype)
-        std = torch.as_tensor(normalization["std"], device=current_std.device, dtype=current_std.dtype)
-        if mean.shape != current_mean.shape or std.shape != current_std.shape:
-            raise ValueError(
-                "Encoder normalization override shape mismatch: "
-                f"mean {tuple(mean.shape)} vs {tuple(current_mean.shape)}, "
-                f"std {tuple(std.shape)} vs {tuple(current_std.shape)}"
-            )
-        if torch.any(std <= 0):
-            raise ValueError("Encoder normalization std must be positive")
+        dtype = torch.float32 if use_float32 else torch.int64
+        mean = self.model_encoder.xela_mean
+        std = self.model_encoder.xela_std
+        if not use_float32:
+            # Legacy downstreams created int64 buffers before load_state_dict,
+            # which truncated float checkpoint statistics during the copy.
+            mean = torch.trunc(mean) if mean.is_floating_point() else mean
+            std = torch.trunc(std) if std.is_floating_point() else std
 
-        current_mean.copy_(mean)
-        current_std.copy_(std)
+        self.model_encoder.xela_mean = mean.to(dtype=dtype)
+        self.model_encoder.xela_std = std.to(dtype=dtype)
         log.info(
-            "Overrode encoder normalization: mean=%s, std=%s",
-            mean.detach().cpu().tolist(),
-            std.detach().cpu().tolist(),
+            "Using %s encoder normalization: mean=%s, std=%s",
+            "float32" if use_float32 else "legacy int64",
+            self.model_encoder.xela_mean.detach().cpu().tolist(),
+            self.model_encoder.xela_std.detach().cpu().tolist(),
         )
 
     def load_task(self, checkpoint_task: str):
