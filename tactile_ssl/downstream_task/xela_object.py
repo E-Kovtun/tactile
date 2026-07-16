@@ -25,6 +25,66 @@ from tactile_ssl.model.d360_transformer import D360Transformer
 log = get_pylogger(__name__)
 
 
+class XelaObjectSpatialMLPClassifier(nn.Module):
+    """Object classifier with a supervised global embedding of sensor XYZ coordinates."""
+
+    supports_spatial_coords = True
+
+    def __init__(
+        self,
+        input_embed_dim: int,
+        classes: List[str],
+        spatial_hidden_dims: List[int],
+        class_weights: Optional[List[float]] = None,
+        coordinate_dim: int = 3,
+    ):
+        super().__init__()
+        if coordinate_dim <= 0:
+            raise ValueError("coordinate_dim must be positive")
+        if not spatial_hidden_dims:
+            raise ValueError("spatial_hidden_dims must contain at least the output embedding dimension")
+        if any(dim <= 0 for dim in spatial_hidden_dims):
+            raise ValueError("all spatial_hidden_dims values must be positive")
+
+        self.num_classes = len(classes)
+        self.class_weights = torch.Tensor(class_weights).float() if class_weights is not None else None
+        self.coordinate_dim = coordinate_dim
+        self.spatial_hidden_dims = tuple(spatial_hidden_dims)
+
+        spatial_dims = [coordinate_dim, *spatial_hidden_dims]
+        spatial_layers = []
+        for layer_idx, (in_dim, out_dim) in enumerate(zip(spatial_dims[:-1], spatial_dims[1:])):
+            spatial_layers.append(nn.Linear(in_dim, out_dim))
+            if layer_idx < len(spatial_dims) - 2:
+                spatial_layers.append(nn.GELU())
+
+        self.spatial_encoder = nn.Sequential(*spatial_layers)
+        self.spatial_norm = nn.LayerNorm(spatial_hidden_dims[-1])
+        self.fusion = nn.Linear(input_embed_dim + spatial_hidden_dims[-1], input_embed_dim)
+        self.fusion_norm = nn.LayerNorm(input_embed_dim)
+        self.probe = nn.Linear(input_embed_dim, self.num_classes)
+
+    def forward(self, signal_embedding, spatial_coords=None):
+        if spatial_coords is None:
+            raise ValueError("spatial_coords are required for XelaObjectSpatialMLPClassifier")
+        if spatial_coords.ndim != 4:
+            raise ValueError(
+                "spatial_coords must have shape [batch, time, sensors, coordinates]; "
+                f"got {tuple(spatial_coords.shape)}"
+            )
+        if spatial_coords.shape[0] != signal_embedding.shape[0]:
+            raise ValueError("spatial_coords and signal_embedding must have matching batch dimensions")
+        if spatial_coords.shape[-1] != self.coordinate_dim:
+            raise ValueError(
+                f"expected {self.coordinate_dim} coordinate channels, got {spatial_coords.shape[-1]}"
+            )
+
+        spatial_embedding = self.spatial_norm(self.spatial_encoder(spatial_coords))
+        spatial_embedding = spatial_embedding.mean(dim=(1, 2))
+        fused = self.fusion(torch.cat([signal_embedding, spatial_embedding], dim=-1))
+        return self.probe(self.fusion_norm(fused))
+
+
 
 class XelaObjectSLModule(SLModule):
     def __init__(self, *args, **kwargs):
@@ -61,6 +121,14 @@ class XelaObjectSLModule(SLModule):
 
     def forward(self, batch, batch_idx):
         sensor_data = batch["sensor"]
+        spatial_coords = None
+        if getattr(self.model_task, "supports_spatial_coords", False):
+            if sensor_data.shape[-1] < 6:
+                raise ValueError(
+                    "The spatial object classifier requires sensor data with three signal and three XYZ channels"
+                )
+            spatial_coords = sensor_data[..., 3:6]
+
         graph_info = self._graph_to_device(batch.get("graph"), sensor_data.device)
         encoder_output = self._forward_encoder(sensor_data, graph_info=graph_info)
         if self.model_encoder.num_register_tokens > 0:
@@ -68,10 +136,11 @@ class XelaObjectSLModule(SLModule):
         else:
             assert self.model_encoder.num_register_tokens == 0
             cls_embedding = torch.mean(encoder_output["x_norm_patchtokens"], dim=1)
-        if self.train_encoder:
-            pred_logits = self.model_task(cls_embedding)
+        task_input = cls_embedding if self.train_encoder else cls_embedding.detach()
+        if getattr(self.model_task, "supports_spatial_coords", False):
+            pred_logits = self.model_task(task_input, spatial_coords=spatial_coords)
         else:
-            pred_logits = self.model_task(cls_embedding.detach())
+            pred_logits = self.model_task(task_input)
         return pred_logits
 
     def step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:

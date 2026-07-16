@@ -35,6 +35,7 @@ OmegaConf.register_new_resolver("int_multiply", lambda a, b: int(a * b))
 OmegaConf.register_new_resolver("int_divide", lambda a, b: a // b)
 OmegaConf.register_new_resolver("d360_expt_name", get_experiment_name)
 OmegaConf.register_new_resolver("d360_modal_tag", get_modality_tag)
+OmegaConf.register_new_resolver("join", lambda separator, values: separator.join(map(str, values)))
 
 
 def init_tensorboard(cfg: DictConfig):

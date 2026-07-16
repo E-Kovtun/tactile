@@ -1,0 +1,34 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_relative_pose
+  - override /task: xela_relative_pose
+  - _self_
+
+ssl_name: dinov2
+sensor: xela
+ckpt_path: ~
+resume_id: ~
+train_data_budget: 1.0
+val_data_budget: 1.0
+
+spatial_hidden_dims: [32, 64]
+run_name: spatial_mlp_layers_${join:_,${spatial_hidden_dims}}_${now:%Y.%m.%d}_${now:%H-%M}
+
+data:
+  dataset:
+    config:
+      features:
+        use_spatial_coords: true
+
+task:
+  checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_nopos_linear_encoder_dinov2/2026.05.27_17-41/checkpoints/epoch-0500.ckpt
+  model_encoder:
+    in_chans: 6
+    num_register_tokens: 1
+    with_masktoken: true
+
+  model_task:
+    _target_: tactile_ssl.downstream_task.xela_relativepose.XelaRelativePoseSpatialMLPDecoder
+    spatial_hidden_dims: ${spatial_hidden_dims}
