@@ -13,6 +13,9 @@ resume_id: ~
 train_data_budget: 1.0
 val_data_budget: 1.0
 
+experiment_name: downstream_pose_dinov2
+run_name: Original
+
 data:
   dataset:
     config:

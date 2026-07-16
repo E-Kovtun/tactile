@@ -9,11 +9,14 @@ defaults:
 ssl_name: dinov2
 sensor: xela
 ssl_model_size: tiny
-checkpoint_encoder: ~
+checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/pretrain_spatial_gnn_encoder_dinov2/2026.07.10_12-40/checkpoints/epoch-0500.ckpt
 ckpt_path: ~
 resume_id: ~
 train_data_budget: 1.0
 val_data_budget: 1.0
+
+experiment_name: downstream_pose_spatial_gnn_dinov2
+run_name: sum_embeddings_192
 
 data:
   dataset:

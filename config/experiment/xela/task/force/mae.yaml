@@ -13,13 +13,16 @@ resume_id: ~
 train_data_budget: 1.0
 val_data_budget: 1.0
 
+experiment_name: downstream_force_mae
+run_name: regular_mae
+
 test:
   data:
     dataset_name: ['val/spherical_pad15', 'val/flat_pad15']
     # dataset_name: ['train2/increment_force_1_5N']
 
 task:
-  checkpoint_encoder: ${paths.encoder_checkpoint_root}/mae_xela_tiny.ckpt
+  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/pretrain_transformer_encoder_mae/2026.07.12_16-22/checkpoints/epoch-0500.ckpt
   model_encoder:
     in_chans: 3
     sequence_length: ${int_multiply:${data.dataset.config.window_time},${data.dataset.config.interpolating_freq}}

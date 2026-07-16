@@ -11,8 +11,11 @@ ssl_name: mae
 ckpt_path: ~
 resume_id: ~
 
+experiment_name: downstream_object_classication_mae
+run_name: regular_mae
+
 task:
-  checkpoint_encoder: ${paths.encoder_checkpoint_root}/mae_xela_tiny.ckpt
+  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/pretrain_transformer_encoder_mae/2026.07.12_16-22/checkpoints/epoch-0500.ckpt
   model_encoder:
     in_chans: 3
     sequence_length: ${int_multiply:${data.window_time},${data.interpolating_freq}}
