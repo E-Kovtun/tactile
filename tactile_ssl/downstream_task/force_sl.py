@@ -33,6 +33,8 @@ from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.downstream_task.sl_module import SLModule
 from tactile_ssl.downstream_task.d360_sl import D360SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
+from tactile_ssl.downstream_task.spatial_distance_attention import XelaDistanceBiasedAttentionBlock
+from tactile_ssl.downstream_task.spatial_gatv2 import XelaSpatialGATv2Encoder
 from tactile_ssl.downstream_task.spatial_wl_mlp import XelaSpatialWLMLPEncoder
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
@@ -595,6 +597,115 @@ class XelaForceSpatialWLMLPProbe(XelaForceLinearProbe):
         spatial_embedding = spatial_embedding.view(batch_size, time_steps, num_nodes, -1)
         fused = self.fusion(torch.cat([z, spatial_embedding], dim=-1))
         return self.fusion_norm(fused)
+
+
+class XelaForceSpatialGATv2Probe(XelaForceLinearProbe):
+    """Force probe with a supervised physical-graph GATv2 coordinate encoder."""
+
+    supports_spatial_coords = True
+    supports_spatial_graph = True
+
+    def __init__(
+        self,
+        *args,
+        spatial_hidden_dims: List[int],
+        spatial_gat_heads: int = 4,
+        spatial_gat_dropout: float = 0.0,
+        coordinate_dim: int = 3,
+        bridge_k: int = 4,
+        edge_mode: str = "distance",
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        signal_embed_dim = self.layer_norm.normalized_shape[0]
+        self.spatial_encoder = XelaSpatialGATv2Encoder(
+            spatial_hidden_dims=spatial_hidden_dims,
+            gat_heads=spatial_gat_heads,
+            gat_dropout=spatial_gat_dropout,
+            coordinate_dim=coordinate_dim,
+            bridge_k=bridge_k,
+            edge_mode=edge_mode,
+        )
+        self.fusion = nn.Linear(signal_embed_dim + self.spatial_encoder.output_dim, signal_embed_dim)
+        self.fusion_norm = nn.LayerNorm(signal_embed_dim)
+        self.fusion.apply(self._init_weights)
+        self.fusion_norm.apply(self._init_weights)
+
+    def _prepare_tokens(self, z, spatial_coords=None, graph_info=None):
+        if spatial_coords is None:
+            raise ValueError("spatial_coords are required for XelaForceSpatialGATv2Probe")
+        if spatial_coords.shape[:-1] != z.shape[:-1]:
+            raise ValueError(
+                "spatial_coords and signal tokens must have matching batch, time, and sensor dimensions; "
+                f"got {tuple(spatial_coords.shape)} and {tuple(z.shape)}"
+            )
+
+        batch_size, time_steps, num_nodes, coordinate_dim = spatial_coords.shape
+        flat_coords = spatial_coords.reshape(batch_size * time_steps, num_nodes, coordinate_dim)
+        spatial_embedding = self.spatial_encoder(flat_coords, graph_info)
+        spatial_embedding = spatial_embedding.view(batch_size, time_steps, num_nodes, -1)
+        fused = self.fusion(torch.cat([z, spatial_embedding], dim=-1))
+        return self.fusion_norm(fused)
+
+
+class XelaForceSpatialAttentionProbe(XelaForceLinearProbe):
+    """Force probe with supervised full self-attention over spatial sensor tokens."""
+
+    supports_spatial_coords = True
+
+    def __init__(
+        self,
+        *args,
+        spatial_attention_layers: int = 1,
+        spatial_attention_heads: int = 12,
+        spatial_distance_hidden_dim: int = 16,
+        spatial_distance_bias: bool = True,
+        coordinate_dim: int = 3,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        if spatial_attention_layers <= 0:
+            raise ValueError("spatial_attention_layers must be positive")
+
+        embed_dim = self.layer_norm.normalized_shape[0]
+        self.spatial_distance_bias = spatial_distance_bias
+        self.coordinate_dim = coordinate_dim
+        self.spatial_attention_blocks = nn.ModuleList(
+            [
+                XelaDistanceBiasedAttentionBlock(
+                    embed_dim=embed_dim,
+                    num_heads=spatial_attention_heads,
+                    distance_hidden_dim=spatial_distance_hidden_dim,
+                    coordinate_dim=coordinate_dim,
+                    init_std=self.init_std,
+                    use_distance_bias=spatial_distance_bias,
+                )
+                for _ in range(spatial_attention_layers)
+            ]
+        )
+
+    def _prepare_tokens(self, z, spatial_coords=None, graph_info=None):
+        if self.spatial_distance_bias and spatial_coords is None:
+            raise ValueError("spatial_coords are required for distance-biased spatial attention")
+        if spatial_coords is not None:
+            if spatial_coords.shape[:-1] != z.shape[:-1]:
+                raise ValueError(
+                    "spatial_coords and signal tokens must have matching batch, time, and sensor dimensions; "
+                    f"got {tuple(spatial_coords.shape)} and {tuple(z.shape)}"
+                )
+            if spatial_coords.shape[-1] != self.coordinate_dim:
+                raise ValueError(
+                    f"expected {self.coordinate_dim} coordinate channels, got {spatial_coords.shape[-1]}"
+                )
+
+        batch_size, time_steps, num_nodes, embed_dim = z.shape
+        tokens = z.reshape(batch_size * time_steps, num_nodes, embed_dim)
+        coords = None
+        if spatial_coords is not None:
+            coords = spatial_coords.reshape(batch_size * time_steps, num_nodes, self.coordinate_dim)
+        for block in self.spatial_attention_blocks:
+            tokens = block(tokens, coords)
+        return tokens.reshape(batch_size, time_steps, num_nodes, embed_dim)
 
     # def forward(self, x):
     #     x = self.pooler(x)

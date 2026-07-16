@@ -12,6 +12,7 @@ from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.d360_sl import D360SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
+from tactile_ssl.downstream_task.spatial_gatv2 import XelaSpatialGATv2Encoder
 from tactile_ssl.downstream_task.spatial_wl_mlp import XelaSpatialWLMLPEncoder
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
@@ -118,6 +119,56 @@ class XelaObjectSpatialWLMLPClassifier(nn.Module):
     def forward(self, signal_embedding, spatial_coords=None, graph_info=None):
         if spatial_coords is None:
             raise ValueError("spatial_coords are required for XelaObjectSpatialWLMLPClassifier")
+        if spatial_coords.ndim != 4:
+            raise ValueError(
+                "spatial_coords must have shape [batch, time, sensors, coordinates]; "
+                f"got {tuple(spatial_coords.shape)}"
+            )
+        if spatial_coords.shape[0] != signal_embedding.shape[0]:
+            raise ValueError("spatial_coords and signal_embedding must have matching batch dimensions")
+
+        mean_coords = spatial_coords.mean(dim=1)
+        spatial_embedding = self.spatial_encoder(mean_coords, graph_info).mean(dim=1)
+        fused = self.fusion(torch.cat([signal_embedding, spatial_embedding], dim=-1))
+        return self.probe(self.fusion_norm(fused))
+
+
+class XelaObjectSpatialGATv2Classifier(nn.Module):
+    """Object classifier with a supervised physical-graph GATv2 coordinate encoder."""
+
+    supports_spatial_coords = True
+    supports_spatial_graph = True
+
+    def __init__(
+        self,
+        input_embed_dim: int,
+        classes: List[str],
+        spatial_hidden_dims: List[int],
+        class_weights: Optional[List[float]] = None,
+        spatial_gat_heads: int = 4,
+        spatial_gat_dropout: float = 0.0,
+        coordinate_dim: int = 3,
+        bridge_k: int = 4,
+        edge_mode: str = "distance",
+    ):
+        super().__init__()
+        self.num_classes = len(classes)
+        self.class_weights = torch.Tensor(class_weights).float() if class_weights is not None else None
+        self.spatial_encoder = XelaSpatialGATv2Encoder(
+            spatial_hidden_dims=spatial_hidden_dims,
+            gat_heads=spatial_gat_heads,
+            gat_dropout=spatial_gat_dropout,
+            coordinate_dim=coordinate_dim,
+            bridge_k=bridge_k,
+            edge_mode=edge_mode,
+        )
+        self.fusion = nn.Linear(input_embed_dim + self.spatial_encoder.output_dim, input_embed_dim)
+        self.fusion_norm = nn.LayerNorm(input_embed_dim)
+        self.probe = nn.Linear(input_embed_dim, self.num_classes)
+
+    def forward(self, signal_embedding, spatial_coords=None, graph_info=None):
+        if spatial_coords is None:
+            raise ValueError("spatial_coords are required for XelaObjectSpatialGATv2Classifier")
         if spatial_coords.ndim != 4:
             raise ValueError(
                 "spatial_coords must have shape [batch, time, sensors, coordinates]; "

@@ -16,15 +16,15 @@ from .signal_transformer import SignalTransformer
 log = get_pylogger(__name__)
 
 
-def _load_gat_conv():
+def load_gatv2_conv():
     try:
-        from torch_geometric.nn import GATConv # Тут нужен GATv2Conv
+        from torch_geometric.nn import GATv2Conv
     except ImportError as exc:
         raise ImportError(
-            "XelaSpatialGNNTransformer requires torch_geometric. "
-            "Install PyG in the active environment before using this encoder."
+            "Xela GATv2 spatial encoders require torch_geometric. "
+            "Install PyG in the active environment before using them."
         ) from exc
-    return GATConv
+    return GATv2Conv
 
 
 def _grid_cells_for_link(link_name: str) -> dict[int, tuple[int, int]]:
@@ -333,9 +333,9 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         self.taxeltype_embed = nn.Parameter(torch.zeros(3, self.signal_embed_dim))
 
         gat_out_channels = spatial_embed_dim // spatial_gat_heads
-        GATConv = _load_gat_conv()
+        GATv2Conv = load_gatv2_conv()
         edge_dim = 1 if edge_mode == "distance" else None
-        self.spatial_gnn_1 = GATConv(
+        self.spatial_gnn_1 = GATv2Conv(
             pos_chans,
             gat_out_channels,
             heads=spatial_gat_heads,
@@ -343,7 +343,7 @@ class XelaSpatialGNNTransformer(SignalTransformer):
             dropout=spatial_gat_dropout,
             edge_dim=edge_dim,
         )
-        self.spatial_gnn_2 = GATConv(
+        self.spatial_gnn_2 = GATv2Conv(
             spatial_embed_dim,
             gat_out_channels,
             heads=spatial_gat_heads,
