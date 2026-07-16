@@ -7,6 +7,7 @@
 
 
 import os
+from datetime import datetime
 import hydra
 import numpy as np
 import torch
@@ -26,6 +27,8 @@ from tactile_ssl.trainer import Trainer
 from tactile_ssl.utils.combined_dataset import CombinedDataset
 
 logger = get_pylogger(__name__)
+
+os.environ.setdefault("TACTILE_RUN_TIMESTAMP", datetime.now().strftime("%Y.%m.%d_%H-%M"))
 
 OmegaConf.register_new_resolver("int_multiply", lambda a, b: int(a * b))
 OmegaConf.register_new_resolver("int_divide", lambda a, b: a // b)

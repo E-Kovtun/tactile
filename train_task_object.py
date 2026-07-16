@@ -9,6 +9,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 import os
+from datetime import datetime
 
 import hydra
 import numpy as np
@@ -30,6 +31,8 @@ from tactile_ssl.utils.combined_dataset import CombinedDataset
 from tactile_ssl.data.xela.preprocessing import compute_cached_xela_normalization
 
 logger = get_pylogger(__name__)
+
+os.environ.setdefault("TACTILE_RUN_TIMESTAMP", datetime.now().strftime("%Y.%m.%d_%H-%M"))
 
 OmegaConf.register_new_resolver("int_multiply", lambda a, b: int(a * b))
 OmegaConf.register_new_resolver("int_divide", lambda a, b: a // b)

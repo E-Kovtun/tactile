@@ -14,7 +14,7 @@ train_data_budget: 1.0
 val_data_budget: 1.0
 
 spatial_hidden_dims: [32, 64]
-run_name: spatial_mlp_layers_${join:_,${spatial_hidden_dims}}_${now:%Y.%m.%d}_${now:%H-%M}
+run_name: spatial_mlp_layers_${join:_,${spatial_hidden_dims}}_${oc.env:TACTILE_RUN_TIMESTAMP}
 
 data:
   dataset:
@@ -23,7 +23,7 @@ data:
         use_spatial_coords: true
 
 task:
-  checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_nopos_linear_encoder_dinov2/2026.05.27_17-41/checkpoints/epoch-0500.ckpt
+  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/scripts/outputs/xela_dinov2/pretrain/pretrain_dinov2_encoder_dinov2/2026.07.06_09-46/checkpoints/epoch-0500.ckpt
   model_encoder:
     in_chans: 6
     num_register_tokens: 1
