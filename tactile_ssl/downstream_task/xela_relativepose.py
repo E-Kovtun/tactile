@@ -13,6 +13,7 @@ import torch.utils.data as data
 from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
+from tactile_ssl.downstream_task.concat_embedding_baseline import LearnedConcatEmbeddingFusion
 from tactile_ssl.downstream_task.spatial_distance_attention import XelaDistanceBiasedAttentionBlock
 from tactile_ssl.downstream_task.spatial_gatv2 import XelaSpatialGATv2Encoder
 from tactile_ssl.downstream_task.spatial_wl_mlp import XelaSpatialWLMLPEncoder
@@ -211,6 +212,22 @@ class XelaRelativePoseSpatialMLPDecoder(XelaRelativePoseDecoder):
         spatial_embedding = self.spatial_norm(self.spatial_encoder(spatial_coords))
         fused = self.fusion(torch.cat([z, spatial_embedding], dim=-1))
         return self.fusion_norm(fused)
+
+
+class XelaRelativePoseConcatEmbeddingBaselineDecoder(XelaRelativePoseDecoder):
+    """Relative-pose fusion baseline with a learned non-spatial embedding."""
+
+    def __init__(self, *args, baseline_embedding_dim: int = 64, **kwargs):
+        super().__init__(*args, **kwargs)
+        signal_embed_dim = self.layer_norm.normalized_shape[0]
+        self.baseline_fusion = LearnedConcatEmbeddingFusion(
+            signal_embed_dim=signal_embed_dim,
+            baseline_embedding_dim=baseline_embedding_dim,
+            init_std=self.init_std,
+        )
+
+    def _prepare_tokens(self, z, spatial_coords=None, graph_info=None):
+        return self.baseline_fusion(z)
 
 
 class XelaRelativePoseSpatialWLMLPDecoder(XelaRelativePoseDecoder):

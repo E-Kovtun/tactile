@@ -12,6 +12,7 @@ from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.d360_sl import D360SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
+from tactile_ssl.downstream_task.concat_embedding_baseline import LearnedConcatEmbeddingFusion
 from tactile_ssl.downstream_task.spatial_gatv2 import XelaSpatialGATv2Encoder
 from tactile_ssl.downstream_task.spatial_wl_mlp import XelaSpatialWLMLPEncoder
 from tactile_ssl.model.layers import NestedTensorBlock as Block
@@ -85,6 +86,29 @@ class XelaObjectSpatialMLPClassifier(nn.Module):
         spatial_embedding = spatial_embedding.mean(dim=(1, 2))
         fused = self.fusion(torch.cat([signal_embedding, spatial_embedding], dim=-1))
         return self.probe(self.fusion_norm(fused))
+
+
+class XelaObjectConcatEmbeddingBaselineClassifier(nn.Module):
+    """Object-classification fusion baseline with a learned non-spatial embedding."""
+
+    def __init__(
+        self,
+        input_embed_dim: int,
+        classes: List[str],
+        class_weights: Optional[List[float]] = None,
+        baseline_embedding_dim: int = 64,
+    ):
+        super().__init__()
+        self.num_classes = len(classes)
+        self.class_weights = torch.Tensor(class_weights).float() if class_weights is not None else None
+        self.baseline_fusion = LearnedConcatEmbeddingFusion(
+            signal_embed_dim=input_embed_dim,
+            baseline_embedding_dim=baseline_embedding_dim,
+        )
+        self.probe = nn.Linear(input_embed_dim, self.num_classes)
+
+    def forward(self, signal_embedding):
+        return self.probe(self.baseline_fusion(signal_embedding))
 
 
 class XelaObjectSpatialWLMLPClassifier(nn.Module):
