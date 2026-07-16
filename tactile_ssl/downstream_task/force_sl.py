@@ -33,6 +33,7 @@ from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.downstream_task.sl_module import SLModule
 from tactile_ssl.downstream_task.d360_sl import D360SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
+from tactile_ssl.downstream_task.spatial_wl_mlp import XelaSpatialWLMLPEncoder
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
 from tactile_ssl.model.xela_transformer import XelaTransformer
@@ -458,16 +459,14 @@ class XelaForceLinearProbe(nn.Module):
         self.target_std = target_std
         self.target_max = target_max
 
-    def _prepare_tokens(self, z, spatial_coords=None):
+    def _prepare_tokens(self, z, spatial_coords=None, graph_info=None):
         return z
 
-    def forward(self, z, spatial_coords=None):
+    def forward(self, z, spatial_coords=None, graph_info=None):
+        z = self._prepare_tokens(z, spatial_coords, graph_info)
+
         if self.pad_id is not None:
             z = z[:, :, self.pad_range[0]:self.pad_range[1], :]
-            if spatial_coords is not None:
-                spatial_coords = spatial_coords[:, :, self.pad_range[0]:self.pad_range[1], :]
-
-        z = self._prepare_tokens(z, spatial_coords)
 
         b, t, _, c = z.shape
         z = self.pooler(z.flatten(0, 1))
@@ -534,7 +533,7 @@ class XelaForceSpatialMLPProbe(XelaForceLinearProbe):
         self.fusion.apply(self._init_weights)
         self.fusion_norm.apply(self._init_weights)
 
-    def _prepare_tokens(self, z, spatial_coords=None):
+    def _prepare_tokens(self, z, spatial_coords=None, graph_info=None):
         if spatial_coords is None:
             raise ValueError("spatial_coords are required for XelaForceSpatialMLPProbe")
         if spatial_coords.shape[:-1] != z.shape[:-1]:
@@ -548,6 +547,52 @@ class XelaForceSpatialMLPProbe(XelaForceLinearProbe):
             )
 
         spatial_embedding = self.spatial_norm(self.spatial_encoder(spatial_coords))
+        fused = self.fusion(torch.cat([z, spatial_embedding], dim=-1))
+        return self.fusion_norm(fused)
+
+
+class XelaForceSpatialWLMLPProbe(XelaForceLinearProbe):
+    """Force probe with physical-graph WL coordinate diffusion and supervised fusion."""
+
+    supports_spatial_coords = True
+    supports_spatial_graph = True
+
+    def __init__(
+        self,
+        *args,
+        spatial_hidden_dims: List[int],
+        spatial_wl_layers: int = 2,
+        coordinate_dim: int = 3,
+        bridge_k: int = 4,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        signal_embed_dim = self.layer_norm.normalized_shape[0]
+        self.spatial_encoder = XelaSpatialWLMLPEncoder(
+            spatial_hidden_dims=spatial_hidden_dims,
+            wl_num_layers=spatial_wl_layers,
+            coordinate_dim=coordinate_dim,
+            bridge_k=bridge_k,
+            init_std=self.init_std,
+        )
+        self.fusion = nn.Linear(signal_embed_dim + self.spatial_encoder.output_dim, signal_embed_dim)
+        self.fusion_norm = nn.LayerNorm(signal_embed_dim)
+        self.fusion.apply(self._init_weights)
+        self.fusion_norm.apply(self._init_weights)
+
+    def _prepare_tokens(self, z, spatial_coords=None, graph_info=None):
+        if spatial_coords is None:
+            raise ValueError("spatial_coords are required for XelaForceSpatialWLMLPProbe")
+        if spatial_coords.shape[:-1] != z.shape[:-1]:
+            raise ValueError(
+                "spatial_coords and signal tokens must have matching batch, time, and sensor dimensions; "
+                f"got {tuple(spatial_coords.shape)} and {tuple(z.shape)}"
+            )
+
+        batch_size, time_steps, num_nodes, coordinate_dim = spatial_coords.shape
+        flat_coords = spatial_coords.reshape(batch_size * time_steps, num_nodes, coordinate_dim)
+        spatial_embedding = self.spatial_encoder(flat_coords, graph_info)
+        spatial_embedding = spatial_embedding.view(batch_size, time_steps, num_nodes, -1)
         fused = self.fusion(torch.cat([z, spatial_embedding], dim=-1))
         return self.fusion_norm(fused)
 
@@ -665,9 +710,9 @@ class XelaForceSLModule(ForceSLModule):
         z = einops.rearrange(z, "(b l) n c -> b l n c", l=chunked_time)
 
         if self.train_encoder:
-            y_pred = self.model_task(z, spatial_coords=spatial_coords)
+            y_pred = self.model_task(z, spatial_coords=spatial_coords, graph_info=graph_info)
         else:
-            y_pred = self.model_task(z.detach(), spatial_coords=spatial_coords)
+            y_pred = self.model_task(z.detach(), spatial_coords=spatial_coords, graph_info=graph_info)
         return y_pred.squeeze(1)
 
     def step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:

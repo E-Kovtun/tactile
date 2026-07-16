@@ -12,6 +12,7 @@ from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.downstream_task.sl_module import SLModule, gather_batch_tensor
 from tactile_ssl.downstream_task.d360_sl import D360SLModule
 from tactile_ssl.downstream_task.attentive_pooler import AttentivePooler
+from tactile_ssl.downstream_task.spatial_wl_mlp import XelaSpatialWLMLPEncoder
 from tactile_ssl.model.layers import NestedTensorBlock as Block
 from tactile_ssl.model.layers import SinusoidalEmbed
 from tactile_ssl.model.xela_transformer import XelaTransformer
@@ -85,6 +86,52 @@ class XelaObjectSpatialMLPClassifier(nn.Module):
         return self.probe(self.fusion_norm(fused))
 
 
+class XelaObjectSpatialWLMLPClassifier(nn.Module):
+    """Object classifier with a physical-graph WL embedding of sensor coordinates."""
+
+    supports_spatial_coords = True
+    supports_spatial_graph = True
+
+    def __init__(
+        self,
+        input_embed_dim: int,
+        classes: List[str],
+        spatial_hidden_dims: List[int],
+        class_weights: Optional[List[float]] = None,
+        spatial_wl_layers: int = 2,
+        coordinate_dim: int = 3,
+        bridge_k: int = 4,
+    ):
+        super().__init__()
+        self.num_classes = len(classes)
+        self.class_weights = torch.Tensor(class_weights).float() if class_weights is not None else None
+        self.spatial_encoder = XelaSpatialWLMLPEncoder(
+            spatial_hidden_dims=spatial_hidden_dims,
+            wl_num_layers=spatial_wl_layers,
+            coordinate_dim=coordinate_dim,
+            bridge_k=bridge_k,
+        )
+        self.fusion = nn.Linear(input_embed_dim + self.spatial_encoder.output_dim, input_embed_dim)
+        self.fusion_norm = nn.LayerNorm(input_embed_dim)
+        self.probe = nn.Linear(input_embed_dim, self.num_classes)
+
+    def forward(self, signal_embedding, spatial_coords=None, graph_info=None):
+        if spatial_coords is None:
+            raise ValueError("spatial_coords are required for XelaObjectSpatialWLMLPClassifier")
+        if spatial_coords.ndim != 4:
+            raise ValueError(
+                "spatial_coords must have shape [batch, time, sensors, coordinates]; "
+                f"got {tuple(spatial_coords.shape)}"
+            )
+        if spatial_coords.shape[0] != signal_embedding.shape[0]:
+            raise ValueError("spatial_coords and signal_embedding must have matching batch dimensions")
+
+        mean_coords = spatial_coords.mean(dim=1)
+        spatial_embedding = self.spatial_encoder(mean_coords, graph_info).mean(dim=1)
+        fused = self.fusion(torch.cat([signal_embedding, spatial_embedding], dim=-1))
+        return self.probe(self.fusion_norm(fused))
+
+
 
 class XelaObjectSLModule(SLModule):
     def __init__(self, *args, **kwargs):
@@ -137,7 +184,9 @@ class XelaObjectSLModule(SLModule):
             assert self.model_encoder.num_register_tokens == 0
             cls_embedding = torch.mean(encoder_output["x_norm_patchtokens"], dim=1)
         task_input = cls_embedding if self.train_encoder else cls_embedding.detach()
-        if getattr(self.model_task, "supports_spatial_coords", False):
+        if getattr(self.model_task, "supports_spatial_graph", False):
+            pred_logits = self.model_task(task_input, spatial_coords=spatial_coords, graph_info=graph_info)
+        elif getattr(self.model_task, "supports_spatial_coords", False):
             pred_logits = self.model_task(task_input, spatial_coords=spatial_coords)
         else:
             pred_logits = self.model_task(task_input)
