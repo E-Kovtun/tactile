@@ -1,9 +1,9 @@
 # @package _global_
 defaults:
-  - /paths: ~
-  - /wandb: ~
-  - /data: xela_joystick_control
-  - /task: xela_joystick_control
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_joystick_control
+  - override /task: xela_joystick_control
   - _self_
 
 ssl_name: e2e

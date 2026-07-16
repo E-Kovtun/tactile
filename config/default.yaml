@@ -35,6 +35,15 @@ model_embed_dim: ${model_info.${model_size}.embed_dim}
 resume_id: ~
 ckpt_path: ~
 experiment_name: default_${model_size}
+run_name: default
+
+hydra:
+  job:
+    # The entrypoint sets this once before Fabric spawns child processes.
+    # Unlike ${now:...}, it therefore stays identical for one DDP run.
+    id: ${oc.env:TACTILE_RUN_TIMESTAMP}
+  run:
+    dir: ${paths.log_dir}/${experiment_name}/${run_name}_${hydra.job.id}
 
 trainer:
   max_epochs: ~

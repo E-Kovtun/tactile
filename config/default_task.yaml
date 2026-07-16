@@ -43,3 +43,15 @@ attn_info:
   MemEffAttention: attn
   DiffAttention: diff_attn
   MemEffDiffAttention: diff_attn
+
+# Task configs provide experiment_name and normally run_name. This fallback
+# keeps direct runs of default_task isolated as well.
+run_name: ${now:%Y.%m.%d}_${now:%H-%M}
+
+hydra:
+  job:
+    # The entrypoint sets this once before Fabric spawns child processes.
+    # Unlike ${now:...}, it therefore stays identical for one DDP run.
+    id: ${oc.env:TACTILE_RUN_TIMESTAMP}
+  run:
+    dir: ${paths.log_dir}/${experiment_name}/${run_name}_${hydra.job.id}

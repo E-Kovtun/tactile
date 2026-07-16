@@ -15,13 +15,7 @@ ssl_model_size: tiny
 experiment_name: ${task_name}_${ssl_name}
 seed: 42
 
-hydra:
-  job:
-    id: ${now:%Y.%m.%d}_${now:%H-%M}
-  run:
-    dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}
-
-run_name: upd_masks_${now:%Y.%m.%d}_${now:%H-%M}
+run_name: upd_masks
 
 
 trainer:

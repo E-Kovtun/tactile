@@ -6,11 +6,7 @@ experiment_name: ${sensor}_${task_name}_${ssl_name}_vit${ssl_model_size}_${train
 checkpoint_encoder: ${paths.encoder_checkpoint_root}/${ssl_name}_xela_${ssl_model_size}.ckpt
 seed: 42
 
-hydra:
-  job:
-    id: ${now:%Y.%m.%d}_${now:%H-%M}
-  run:
-    dir: ${paths.log_dir}/${hydra.job.id}_${experiment_name}
+run_name: joystick
 
 wandb:
   project: ${task_name}_${sensor}_v2
