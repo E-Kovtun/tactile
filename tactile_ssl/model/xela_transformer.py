@@ -49,6 +49,7 @@ class XelaTransformer(SignalTransformer):
         with_masktoken: bool = False,
         causal: bool = False,
         normalization: Optional[DictConfig] = None,
+        use_taxel_type_embedding: bool = True,
     ):
         self.in_dim: int = in_dim
         self.in_chans: int = in_chans
@@ -96,11 +97,16 @@ class XelaTransformer(SignalTransformer):
         )
         # self.patch_embed = nn.Linear(in_chans, self.embed_dim)
         self.taxeltypes = ["4x4", "4x6", "curved"]
-        self.taxeltype_embed = nn.Parameter(torch.zeros(3, self.embed_dim))
+        self.use_taxel_type_embedding = bool(use_taxel_type_embedding)
+        self.taxeltype_embed = nn.Parameter(
+            torch.zeros(3, self.embed_dim),
+            requires_grad=self.use_taxel_type_embedding,
+        )
 
         self.head = nn.Identity() if head is None else head
 
-        nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
+        if self.use_taxel_type_embedding:
+            nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
         self.init_weights()
 
     def update_stats(self, xela_mean, xela_std):
@@ -131,20 +137,20 @@ class XelaTransformer(SignalTransformer):
         sensor_embed = self.patch_embed(x)
         sensor_embed = einops.rearrange(sensor_embed, "(b n) c t -> b t n c", b=b)
 
-        # We add a learnable embedding to identify different types of xela taxels
-        prev_idx = 0
-        for i, (k, v) in enumerate(XELA_FLATTEN_ORDER.items()):
-            x = None
-            if "4x4" in k:
-                x = self.taxeltype_embed[0]
-            elif "4x6" in k:
-                x = self.taxeltype_embed[1]
-            elif "aftc" in k:
-                x = self.taxeltype_embed[2]
-            else:
-                raise ValueError("Bad taxel type")
-            sensor_embed[..., prev_idx : prev_idx + v, :] += x[None, None, :]
-            prev_idx += v
+        if self.use_taxel_type_embedding:
+            # We add a learnable embedding to identify different types of xela taxels
+            prev_idx = 0
+            for k, v in XELA_FLATTEN_ORDER.items():
+                if "4x4" in k:
+                    taxeltype_embed = self.taxeltype_embed[0]
+                elif "4x6" in k:
+                    taxeltype_embed = self.taxeltype_embed[1]
+                elif "aftc" in k:
+                    taxeltype_embed = self.taxeltype_embed[2]
+                else:
+                    raise ValueError("Bad taxel type")
+                sensor_embed[..., prev_idx : prev_idx + v, :] += taxeltype_embed[None, None, :]
+                prev_idx += v
         return sensor_embed
 
     def create_causal_mask(self, x):

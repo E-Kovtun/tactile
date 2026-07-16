@@ -270,6 +270,7 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         with_masktoken: bool = False,
         causal: bool = False,
         normalization: Optional[DictConfig] = None,
+        use_taxel_type_embedding: bool = True,
     ):
         if in_chans != signal_chans + pos_chans:
             raise ValueError("in_chans must equal signal_chans + pos_chans")
@@ -330,7 +331,11 @@ class XelaSpatialGNNTransformer(SignalTransformer):
             chunk_size=self.time_chunk_size,
             embed_dim=self.signal_embed_dim,
         )
-        self.taxeltype_embed = nn.Parameter(torch.zeros(3, self.signal_embed_dim))
+        self.use_taxel_type_embedding = bool(use_taxel_type_embedding)
+        self.taxeltype_embed = nn.Parameter(
+            torch.zeros(3, self.signal_embed_dim),
+            requires_grad=self.use_taxel_type_embedding,
+        )
 
         gat_out_channels = spatial_embed_dim // spatial_gat_heads
         GATv2Conv = load_gatv2_conv()
@@ -354,7 +359,8 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         self.spatial_activation = nn.ELU()
         self.register_buffer("static_physical_edge_index", torch.empty((2, 0), dtype=torch.long), persistent=False)
 
-        nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
+        if self.use_taxel_type_embedding:
+            nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
         self.init_weights()
 
     def update_stats(self, xela_mean, xela_std):
@@ -382,18 +388,19 @@ class XelaSpatialGNNTransformer(SignalTransformer):
         signal_embed = self.patch_embed(signal)
         signal_embed = einops.rearrange(signal_embed, "(b n) c t -> b t n c", b=b)
 
-        prev_idx = 0
-        for key, count in XELA_FLATTEN_ORDER.items():
-            if "4x4" in key:
-                taxeltype_embed = self.taxeltype_embed[0]
-            elif "4x6" in key:
-                taxeltype_embed = self.taxeltype_embed[1]
-            elif "aftc" in key:
-                taxeltype_embed = self.taxeltype_embed[2]
-            else:
-                raise ValueError(f"Bad taxel type for {key}")
-            signal_embed[..., prev_idx : prev_idx + count, :] += taxeltype_embed[None, None, :]
-            prev_idx += count
+        if self.use_taxel_type_embedding:
+            prev_idx = 0
+            for key, count in XELA_FLATTEN_ORDER.items():
+                if "4x4" in key:
+                    taxeltype_embed = self.taxeltype_embed[0]
+                elif "4x6" in key:
+                    taxeltype_embed = self.taxeltype_embed[1]
+                elif "aftc" in key:
+                    taxeltype_embed = self.taxeltype_embed[2]
+                else:
+                    raise ValueError(f"Bad taxel type for {key}")
+                signal_embed[..., prev_idx : prev_idx + count, :] += taxeltype_embed[None, None, :]
+                prev_idx += count
         return signal_embed
 
     def _get_static_physical_edge_index(self, pos_ref: torch.Tensor, graph_info: Optional[dict] = None) -> torch.Tensor:

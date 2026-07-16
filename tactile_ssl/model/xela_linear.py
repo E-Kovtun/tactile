@@ -30,6 +30,7 @@ class XelaLinear(nn.Module):
         norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         with_masktoken: bool = False,
         normalization: Optional[DictConfig] = None,
+        use_taxel_type_embedding: bool = True,
     ):
         self.in_dim: int = in_dim # number of sensors
         self.in_chans: int = in_chans
@@ -54,7 +55,11 @@ class XelaLinear(nn.Module):
         )
         # self.patch_embed = nn.Linear(in_chans, self.embed_dim)
         self.taxeltypes = ["4x4", "4x6", "curved"]
-        self.taxeltype_embed = nn.Parameter(torch.zeros(3, self.embed_dim))
+        self.use_taxel_type_embedding = bool(use_taxel_type_embedding)
+        self.taxeltype_embed = nn.Parameter(
+            torch.zeros(3, self.embed_dim),
+            requires_grad=self.use_taxel_type_embedding,
+        )
 
         self.head = nn.Identity() 
         self.register_tokens = None
@@ -62,7 +67,8 @@ class XelaLinear(nn.Module):
 
         self.norm = norm_layer(embed_dim)
 
-        nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
+        if self.use_taxel_type_embedding:
+            nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
 
         self.init_pos_embed(pos_embed_fn)
 
@@ -118,20 +124,20 @@ class XelaLinear(nn.Module):
         sensor_embed = self.patch_embed(x)
         sensor_embed = einops.rearrange(sensor_embed, "(b n) c t -> b t n c", b=b)
 
-        # We add a learnable embedding to identify different types of xela taxels
-        prev_idx = 0
-        for i, (k, v) in enumerate(XELA_FLATTEN_ORDER.items()):
-            x = None
-            if "4x4" in k:
-                x = self.taxeltype_embed[0]
-            elif "4x6" in k:
-                x = self.taxeltype_embed[1]
-            elif "aftc" in k:
-                x = self.taxeltype_embed[2]
-            else:
-                raise ValueError("Bad taxel type")
-            sensor_embed[..., prev_idx : prev_idx + v, :] += x[None, None, :]
-            prev_idx += v
+        if self.use_taxel_type_embedding:
+            # We add a learnable embedding to identify different types of xela taxels
+            prev_idx = 0
+            for k, v in XELA_FLATTEN_ORDER.items():
+                if "4x4" in k:
+                    taxeltype_embed = self.taxeltype_embed[0]
+                elif "4x6" in k:
+                    taxeltype_embed = self.taxeltype_embed[1]
+                elif "aftc" in k:
+                    taxeltype_embed = self.taxeltype_embed[2]
+                else:
+                    raise ValueError("Bad taxel type")
+                sensor_embed[..., prev_idx : prev_idx + v, :] += taxeltype_embed[None, None, :]
+                prev_idx += v
         return sensor_embed
 
     def apply_tubelet_masks(self, x, masks, concat=True):
@@ -261,4 +267,3 @@ class XelaLinear(nn.Module):
     def forward(self, x, masks=None, mask_type=None, masktoken_masks=None):
         out = self.forward_features(x, masks, mask_type, masktoken_masks)
         return self.head(out["x_norm_patchtokens"])
-

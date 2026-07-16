@@ -159,6 +159,7 @@ class XelaGAT(nn.Module):
         norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         with_masktoken: bool = False,
         normalization: Optional["DictConfig"] = None,
+        use_taxel_type_embedding: bool = True,
     ):
         assert in_chans == signal_chans + pos_chans, "in_chans must equal signal_chans + pos_chans"
         assert embed_dim % gat_num_heads == 0, "embed_dim must be divisible by gat_num_heads"
@@ -190,7 +191,11 @@ class XelaGAT(nn.Module):
         )
 
         self.taxeltypes = ["4x4", "4x6", "curved"]
-        self.taxeltype_embed = nn.Parameter(torch.zeros(3, self.embed_dim))
+        self.use_taxel_type_embedding = bool(use_taxel_type_embedding)
+        self.taxeltype_embed = nn.Parameter(
+            torch.zeros(3, self.embed_dim),
+            requires_grad=self.use_taxel_type_embedding,
+        )
 
         self.gat_layers = nn.ModuleList(
             [
@@ -212,7 +217,8 @@ class XelaGAT(nn.Module):
 
         self.norm = norm_layer(embed_dim)
 
-        nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
+        if self.use_taxel_type_embedding:
+            nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
 
         # self.init_pos_embed(pos_embed_fn)
 
@@ -269,19 +275,20 @@ class XelaGAT(nn.Module):
         sensor_embed = self.patch_embed(signal)
         sensor_embed = einops.rearrange(sensor_embed, "(b n) c t -> b t n c", b=b)
 
-        # Taxel-type embedding, same convention as XelaLinear.
-        prev_idx = 0
-        for key, v in XELA_FLATTEN_ORDER.items():
-            if "4x4" in key:
-                te = self.taxeltype_embed[0]
-            elif "4x6" in key:
-                te = self.taxeltype_embed[1]
-            elif "aftc" in key:
-                te = self.taxeltype_embed[2]
-            else:
-                raise ValueError("Bad taxel type")
-            sensor_embed[..., prev_idx : prev_idx + v, :] += te[None, None, :]
-            prev_idx += v
+        if self.use_taxel_type_embedding:
+            # Taxel-type embedding, same convention as XelaLinear.
+            prev_idx = 0
+            for key, v in XELA_FLATTEN_ORDER.items():
+                if "4x4" in key:
+                    taxeltype_embed = self.taxeltype_embed[0]
+                elif "4x6" in key:
+                    taxeltype_embed = self.taxeltype_embed[1]
+                elif "aftc" in key:
+                    taxeltype_embed = self.taxeltype_embed[2]
+                else:
+                    raise ValueError("Bad taxel type")
+                sensor_embed[..., prev_idx : prev_idx + v, :] += taxeltype_embed[None, None, :]
+                prev_idx += v
 
         return sensor_embed
 
