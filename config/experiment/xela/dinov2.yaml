@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 model_size: tiny
-ckpt_path: ~
+ckpt_path: ~ #/workspace-SR004.nfs2/konovalov/tactile/experiments/pretrain_dinov2_encoder_dinov2/2026.07.08_19-25/checkpoints
 
 task_name: pretrain_dinov2_encoder # pretrain_nopos_linear_encoder
 ssl_name: dinov2
@@ -21,7 +21,7 @@ hydra:
   run:
     dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}
 
-run_name: ${now:%Y.%m.%d}_${now:%H-%M}
+run_name: Orig_DiNO_with_probe
 
 data:
   features:

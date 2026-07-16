@@ -2,7 +2,7 @@ defaults:
   - paths: default
   - tensorboard: tensorboard_config
   - data: xela
-  - algorithm: byol_alexnet
+  - algorithm: xela_dinov2.yaml
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
   - _self_

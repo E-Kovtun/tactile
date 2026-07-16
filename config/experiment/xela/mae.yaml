@@ -21,7 +21,7 @@ hydra:
   run:
     dir: ${paths.log_dir}/${experiment_name}/${hydra.job.id}
 
-run_name: ${now:%Y.%m.%d}_${now:%H-%M}
+run_name: MAE_on_fixed_dataset
 
 trainer:
   max_epochs: 500
