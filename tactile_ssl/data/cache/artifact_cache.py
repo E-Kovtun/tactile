@@ -117,8 +117,18 @@ class ArtifactCache:
                 lock_path.unlink(missing_ok=True)
         except FileNotFoundError:
             pass
+        except OSError as exc:
+            # A completed artifact is still usable even if NFS delays or
+            # rejects removal of its lock directory. Waiters re-check the
+            # artifact while waiting, so a cleanup failure must not deadlock
+            # the whole dataset loader.
+            log.warning(f"Unable to remove cache lock at {lock_path}: {exc}")
 
-    def _acquire_lock(self, lock_path: Path) -> str:
+    def _acquire_lock(
+        self,
+        lock_path: Path,
+        artifact_ready: Optional[Callable[[], bool]] = None,
+    ) -> Optional[str]:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         token = uuid.uuid4().hex
         start_time = time.monotonic()
@@ -126,9 +136,22 @@ class ArtifactCache:
         while True:
             try:
                 lock_path.mkdir()
-                self._write_lock_owner(lock_path, token)
+                try:
+                    self._write_lock_owner(lock_path, token)
+                except BaseException:
+                    # Do not strand an ownerless directory if owner metadata
+                    # creation fails after the atomic mkdir succeeded.
+                    self._remove_stale_lock(lock_path)
+                    raise
                 return token
             except FileExistsError:
+                # Another worker may have completed and atomically published
+                # the artifact but failed to remove its lock directory. Once
+                # both artifact files exist there is no reason to wait for or
+                # mutate that orphaned lock.
+                if artifact_ready is not None and artifact_ready():
+                    return None
+
                 now = time.monotonic()
                 wait_s = now - start_time
                 age_s = self._lock_age_s(lock_path)
@@ -181,8 +204,11 @@ class ArtifactCache:
 
     def _release_lock(self, lock_path: Path, token: str) -> None:
         owner = self._read_lock_owner(lock_path)
-        if owner and owner.get("token") != token:
-            log.warning(f"Not releasing cache lock {lock_path}; owner changed to {owner}")
+        if owner.get("token") != token:
+            log.warning(
+                f"Not releasing cache lock {lock_path}; "
+                f"expected token={token}, current owner={owner}"
+            )
             return
         self._remove_stale_lock(lock_path)
 
@@ -246,7 +272,19 @@ class ArtifactCache:
             return arrays, key
 
         lock_path = self.lock_path(spec.artifact, key)
-        lock_token = self._acquire_lock(lock_path)
+        lock_token = self._acquire_lock(
+            lock_path,
+            artifact_ready=(
+                None
+                if self.force_recompute
+                else lambda: self._artifact_exists(npz_path, yaml_path)
+            ),
+        )
+        if lock_token is None:
+            if self.log_hits:
+                log.info(f"Cache hit for {spec.artifact}: {key} (artifact published while waiting)")
+            return self._load_artifact(npz_path), key
+
         heartbeat_stop, heartbeat_thread = self._start_lock_heartbeat(lock_path, lock_token)
         try:
             if not self.force_recompute and self._artifact_exists(npz_path, yaml_path):

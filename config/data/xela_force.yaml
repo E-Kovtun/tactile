@@ -12,8 +12,8 @@ cache:
   force_recompute: false
   log_hits: true
   num_workers: 32
-  lock_timeout_s: 1800
-  stale_lock_s: 3600
+  lock_timeout_s: 300
+  stale_lock_s: 600
   lock_log_interval_s: 30
 
 dataset:

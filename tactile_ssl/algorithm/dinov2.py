@@ -121,8 +121,27 @@ class DINOv2Module(Module, nn.Module):
 
             for probe in self.online_probes:
                 outputs_probe = {k: v for k, v in outputs.items() if k.startswith(probe.probe_name)}
-                # for k, v in outputs_probe.items():
-                #     trainer_instance.writer.add_scalar(f"{stage}/{k}", v, step)
+                for k, v in outputs_probe.items():
+                    if isinstance(v, torch.Tensor):
+                        if v.numel() != 1:
+                            continue
+                        v = v.detach().item()
+                    elif not isinstance(v, (int, float)):
+                        continue
+                    trainer_instance.writer.add_scalar(f"{stage}/{k}", v, step)
+
+            online_probes_loss = outputs.get("online_probes_loss")
+            if isinstance(online_probes_loss, torch.Tensor):
+                if online_probes_loss.numel() == 1:
+                    online_probes_loss = online_probes_loss.detach().item()
+                else:
+                    online_probes_loss = None
+            if isinstance(online_probes_loss, (int, float)):
+                trainer_instance.writer.add_scalar(
+                    f"{stage}/online_probes_loss",
+                    online_probes_loss,
+                    step,
+                )
 
             trainer_instance.writer.add_scalar(f"{stage}/teacher_temperature", self.current_teacher_temp, step)
 

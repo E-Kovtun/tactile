@@ -18,7 +18,7 @@ log = get_pylogger(__name__)
 
 def _load_gat_conv():
     try:
-        from torch_geometric.nn import GATConv
+        from torch_geometric.nn import GATConv # Тут нужен GATv2Conv
     except ImportError as exc:
         raise ImportError(
             "XelaSpatialGNNTransformer requires torch_geometric. "
