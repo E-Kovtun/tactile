@@ -1,0 +1,36 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_force
+  - override /task: xela_force_estimation
+  - _self_
+
+sensor: xela
+ssl_name: dinov2
+ckpt_path: ~
+resume_id: ~
+
+train_data_budget: 1.0
+val_data_budget: ${train_data_budget}
+
+spatial_hidden_dims: [32, 64]
+run_name: spatial_mlp_layers_${join:_,${spatial_hidden_dims}}_${now:%Y.%m.%d}_${now:%H-%M}
+
+data:
+  dataset:
+    config:
+      features:
+        use_spatial_coords: true
+
+task:
+  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/scripts/outputs/xela_dinov2/pretrain/pretrain_dinov2_encoder_dinov2/2026.07.06_09-46/checkpoints/epoch-0500.ckpt
+  model_encoder:
+    in_chans: 6
+    num_register_tokens: 1
+    with_masktoken: true
+
+  model_task:
+    _target_: tactile_ssl.downstream_task.XelaForceSpatialMLPProbe
+    spatial_hidden_dims: ${spatial_hidden_dims}
+    pad_id: 15

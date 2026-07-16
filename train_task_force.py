@@ -33,6 +33,7 @@ OmegaConf.register_new_resolver("d360_expt_name", get_experiment_name)
 OmegaConf.register_new_resolver("d360_modal_tag", get_modality_tag)
 OmegaConf.register_new_resolver("d360_modal_used_tag", get_modality_used_tag)
 OmegaConf.register_new_resolver("capitalize", lambda s: s.title())
+OmegaConf.register_new_resolver("join", lambda separator, values: separator.join(map(str, values)))
 
 
 def init_tensorboard(cfg: DictConfig):

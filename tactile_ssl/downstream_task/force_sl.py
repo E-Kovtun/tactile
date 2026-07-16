@@ -458,9 +458,16 @@ class XelaForceLinearProbe(nn.Module):
         self.target_std = target_std
         self.target_max = target_max
 
-    def forward(self, z):
+    def _prepare_tokens(self, z, spatial_coords=None):
+        return z
+
+    def forward(self, z, spatial_coords=None):
         if self.pad_id is not None:
             z = z[:, :, self.pad_range[0]:self.pad_range[1], :]
+            if spatial_coords is not None:
+                spatial_coords = spatial_coords[:, :, self.pad_range[0]:self.pad_range[1], :]
+
+        z = self._prepare_tokens(z, spatial_coords)
 
         b, t, _, c = z.shape
         z = self.pooler(z.flatten(0, 1))
@@ -484,6 +491,65 @@ class XelaForceLinearProbe(nn.Module):
                 y[..., 0:2] = F.tanh(y[..., 0:2])
         
         return y
+
+
+class XelaForceSpatialMLPProbe(XelaForceLinearProbe):
+    """Force probe that learns a supervised spatial embedding from XYZ coordinates."""
+
+    supports_spatial_coords = True
+
+    def __init__(
+        self,
+        *args,
+        spatial_hidden_dims: List[int],
+        coordinate_dim: int = 3,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+
+        if coordinate_dim <= 0:
+            raise ValueError("coordinate_dim must be positive")
+        if not spatial_hidden_dims:
+            raise ValueError("spatial_hidden_dims must contain at least the output embedding dimension")
+        if any(dim <= 0 for dim in spatial_hidden_dims):
+            raise ValueError("all spatial_hidden_dims values must be positive")
+
+        signal_embed_dim = self.layer_norm.normalized_shape[0]
+        spatial_dims = [coordinate_dim, *spatial_hidden_dims]
+        spatial_layers = []
+        for layer_idx, (in_dim, out_dim) in enumerate(zip(spatial_dims[:-1], spatial_dims[1:])):
+            spatial_layers.append(nn.Linear(in_dim, out_dim))
+            if layer_idx < len(spatial_dims) - 2:
+                spatial_layers.append(nn.GELU())
+
+        self.coordinate_dim = coordinate_dim
+        self.spatial_hidden_dims = tuple(spatial_hidden_dims)
+        self.spatial_encoder = nn.Sequential(*spatial_layers)
+        self.spatial_norm = nn.LayerNorm(spatial_hidden_dims[-1])
+        self.fusion = nn.Linear(signal_embed_dim + spatial_hidden_dims[-1], signal_embed_dim)
+        self.fusion_norm = nn.LayerNorm(signal_embed_dim)
+
+        self.spatial_encoder.apply(self._init_weights)
+        self.spatial_norm.apply(self._init_weights)
+        self.fusion.apply(self._init_weights)
+        self.fusion_norm.apply(self._init_weights)
+
+    def _prepare_tokens(self, z, spatial_coords=None):
+        if spatial_coords is None:
+            raise ValueError("spatial_coords are required for XelaForceSpatialMLPProbe")
+        if spatial_coords.shape[:-1] != z.shape[:-1]:
+            raise ValueError(
+                "spatial_coords and signal tokens must have matching batch, time, and sensor dimensions; "
+                f"got {tuple(spatial_coords.shape)} and {tuple(z.shape)}"
+            )
+        if spatial_coords.shape[-1] != self.coordinate_dim:
+            raise ValueError(
+                f"expected {self.coordinate_dim} coordinate channels, got {spatial_coords.shape[-1]}"
+            )
+
+        spatial_embedding = self.spatial_norm(self.spatial_encoder(spatial_coords))
+        fused = self.fusion(torch.cat([z, spatial_embedding], dim=-1))
+        return self.fusion_norm(fused)
 
     # def forward(self, x):
     #     x = self.pooler(x)
@@ -578,6 +644,20 @@ class XelaForceSLModule(ForceSLModule):
     def forward(self, batch, batch_idx):
         sensor_data = batch["sensor"]
         chunked_time = sensor_data.shape[1] // self.sequence_length
+        spatial_coords = None
+        if getattr(self.model_task, "supports_spatial_coords", False):
+            if sensor_data.shape[-1] < 6:
+                raise ValueError(
+                    "The spatial force probe requires sensor data with three signal and three XYZ channels"
+                )
+            spatial_coords = einops.rearrange(
+                sensor_data[..., 3:6],
+                "b (l q k) n c -> b l q k n c",
+                l=chunked_time,
+                k=self.time_chunk_size,
+            ).mean(dim=3)
+            spatial_coords = einops.rearrange(spatial_coords, "b l q n c -> b l (q n) c")
+
         graph_info = self._graph_to_device(batch.get("graph"), sensor_data.device, repeats=chunked_time)
         sensor_data = einops.rearrange(sensor_data, "b (l k) n c -> (b l) k n c", k=self.sequence_length)
         z = self._forward_encoder(sensor_data, graph_info=graph_info)["x_norm_patchtokens"]  # pyright: ignore[reportCallIssue]
@@ -585,9 +665,9 @@ class XelaForceSLModule(ForceSLModule):
         z = einops.rearrange(z, "(b l) n c -> b l n c", l=chunked_time)
 
         if self.train_encoder:
-            y_pred = self.model_task(z)
+            y_pred = self.model_task(z, spatial_coords=spatial_coords)
         else:
-            y_pred = self.model_task(z.detach())
+            y_pred = self.model_task(z.detach(), spatial_coords=spatial_coords)
         return y_pred.squeeze(1)
 
     def step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:

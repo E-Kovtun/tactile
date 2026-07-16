@@ -4,6 +4,7 @@ from .force_sl import (
     ForceLinearProbe,
     XelaForceSLModule,
     XelaForceLinearProbe,
+    XelaForceSpatialMLPProbe,
     D360ForceSLModule,
     D360ForceLinearProbe,
 )  # noqa F401
