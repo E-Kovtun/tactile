@@ -1,0 +1,86 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela_object
+  - override /task: xela_object_classification
+  - _self_
+
+sensor: xela
+ssl_name: dinov2
+ssl_model_size: tiny
+checkpoint_encoder: ${paths.log_dir}/pretrain_spatial_wl_encoder_dinov2/SpatialWL2Sum192_${oc.env:SPATIAL_WL_PRETRAIN_TIMESTAMP}/checkpoints/epoch-0500.ckpt
+ckpt_path: ~
+resume_id: ~
+
+experiment_name: downstream_object_classification_spatial_wl_dinov2
+run_name: pretrained_spatial_wl2_sum192
+
+data:
+  dataset_list:
+    - type: teleop
+      sequence_list:
+        - corn
+        - rubikscube
+        - metalcup
+        - cup
+        - ball
+        - drill
+        - mustard
+        - lego
+        - pringle
+        - legopool
+        - watermelon
+        - popcorn
+        - loofah
+        - slipper
+      train_dataset_ids: [0, 1, 2, 3, 4, 5, 6, 7]
+      val_dataset_ids: [8]
+      test_dataset_ids: [9]
+      dataset:
+        _target_: tactile_ssl.data.xela_tactile.XelaGraphSSLDataset
+        config:
+          window_time: ${data.window_time}
+          window_overlap: ${data.window_overlap}
+          interpolating_freq: ${data.interpolating_freq}
+          subtract_baseline: true
+          smooth_data: false
+          bias_noise_std: 0
+          bias_range: 0
+          cache: ${data.cache}
+          features:
+            use_spatial_coords: true
+          graph:
+            enabled: true
+            type: physical
+            topology_mode: static_edges
+            edge_attr_mode: topology
+            bridge_k: 4
+        data_path: ${paths.data_root}/xela/pretraining/extracted
+        baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
+        xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+        load_images: false
+
+task:
+  checkpoint_encoder: ${checkpoint_encoder}
+  model_encoder:
+    _target_: tactile_ssl.model.XelaSpatialWLDINOTransformer
+    in_dim: 368
+    in_chans: 6
+    sequence_length: 10
+    time_chunk_size: 10
+    embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    spatial_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    spatial_wl_layers: 2
+    bridge_k: 4
+    depth: ${model_info.${ssl_model_size}.depth}
+    num_heads: ${model_info.${ssl_model_size}.num_heads}
+    num_register_tokens: 1
+    pos_embed_fn: learned
+    with_masktoken: true
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization:
+    causal: false
+  model_task:
+    input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}

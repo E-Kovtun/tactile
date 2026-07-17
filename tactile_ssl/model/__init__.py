@@ -8,6 +8,7 @@ from .xela_transformer import *  # noqa: F401
 from .xela_linear import XelaLinear
 from .xela_gat import XelaGAT
 from .xela_spatial_gnn import XelaSpatialGNNTransformer
+from .xela_spatial_wl_dino import XelaSpatialWLDINOTransformer
 
 
 VIT_EMBED_DIMS = {
