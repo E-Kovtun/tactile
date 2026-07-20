@@ -80,6 +80,10 @@ def _variant(use_spatial_coords: Any, override: Any = None) -> str:
 def _row(
     *,
     task: str,
+    block_id: str,
+    block_name: str,
+    baseline_id: str,
+    baseline_name: str,
     experiment: Mapping[str, Any],
     is_baseline: bool,
     variant: str,
@@ -89,6 +93,10 @@ def _row(
     manifest = artifact.manifest
     return {
         "task": task,
+        "comparison_block_id": block_id,
+        "comparison_block_name": block_name,
+        "baseline_id": baseline_id,
+        "baseline_name": baseline_name,
         "experiment_id": str(experiment["id"]),
         "method": str(experiment["name"]),
         "is_baseline": is_baseline,
@@ -109,88 +117,115 @@ def _row(
     }
 
 
+def _comparison_blocks(task_name: str, task_cfg: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize the block config while retaining legacy single-baseline support."""
+    configured_blocks = task_cfg.get("comparison_blocks")
+    if configured_blocks:
+        blocks = [dict(block) for block in configured_blocks]
+        block_ids = [str(block.get("id", "")) for block in blocks]
+        if any(not block_id for block_id in block_ids):
+            raise ValueError(f"Every comparison block in {task_name} must have a non-empty id")
+        if len(block_ids) != len(set(block_ids)):
+            raise ValueError(f"Duplicate comparison block id in task {task_name}")
+        return blocks
+
+    # Legacy format: baseline points to one entry in the flat experiment list.
+    experiments = [dict(experiment) for experiment in task_cfg.get("experiments", [])]
+    if not experiments:
+        return []
+    baseline_id = str(task_cfg.get("baseline"))
+    matching = [experiment for experiment in experiments if str(experiment["id"]) == baseline_id]
+    if len(matching) != 1:
+        raise ValueError(
+            f"Baseline {baseline_id!r} is not listed exactly once in {task_name}.experiments"
+        )
+    return [
+        {
+            "id": "default",
+            "name": "",
+            "baseline": matching[0],
+            "experiments": [
+                experiment for experiment in experiments if str(experiment["id"]) != baseline_id
+            ],
+        }
+    ]
+
+
 def run_analysis(cfg: DictConfig) -> tuple:
     statistics_cfg = cfg.statistics
     report_rows: List[Dict[str, Any]] = []
     provenance_rows: List[Dict[str, Any]] = []
 
     for configured_task, task_cfg in cfg.tasks.items():
-        if task_cfg is None or not task_cfg.get("experiments"):
+        if task_cfg is None:
             continue
         if configured_task not in TASK_ALIASES:
             raise ValueError(f"Unknown task section: {configured_task}")
         task = TASK_ALIASES[configured_task]
-        experiments = [dict(experiment) for experiment in task_cfg.experiments]
-        ids = [str(experiment["id"]) for experiment in experiments]
-        if len(ids) != len(set(ids)):
-            raise ValueError(f"Duplicate experiment id in task {configured_task}")
-        baseline_id = str(task_cfg.baseline)
-        if baseline_id not in ids:
-            raise ValueError(f"Baseline {baseline_id!r} is not listed in {configured_task}.experiments")
-        experiments.sort(key=lambda experiment: str(experiment["id"]) != baseline_id)
+        blocks = _comparison_blocks(configured_task, task_cfg)
+        artifact_cache: Dict[Path, Any] = {}
 
-        loaded = {}
-        for experiment in experiments:
-            run_root = _resolve_run_directory(experiment)
-            artifact, checkpoint, config_path = backfill_evaluation_artifact(task, run_root)
-            if artifact.manifest.get("task") != task:
+        for block in blocks:
+            block_id = str(block["id"])
+            block_name = str(block.get("name", block_id))
+            if not isinstance(block.get("baseline"), Mapping):
+                raise ValueError(f"Comparison block {configured_task}.{block_id} must define baseline")
+            baseline_experiment = dict(block["baseline"])
+            candidates = [dict(experiment) for experiment in block.get("experiments", [])]
+            experiments = [baseline_experiment, *candidates]
+            ids = [str(experiment["id"]) for experiment in experiments]
+            if len(ids) != len(set(ids)):
                 raise ValueError(
-                    f"Artifact {artifact.path} declares task={artifact.manifest.get('task')!r}, expected {task!r}"
+                    f"Duplicate experiment id in comparison block {configured_task}.{block_id}"
                 )
-            metadata = load_run_metadata(run_root)
-            spatial = artifact.manifest.get("use_spatial_coords")
-            if spatial is None:
-                spatial = metadata["use_spatial_coords"]
-            variant = _variant(spatial, experiment.get("report_variant"))
-            experiment_id = str(experiment["id"])
-            loaded[experiment_id] = (experiment, artifact, variant)
-            provenance_rows.append(
-                {
-                    "task": task,
-                    "experiment_id": experiment_id,
-                    "method": str(experiment["name"]),
-                    "is_baseline": experiment_id == baseline_id,
-                    "variant": variant,
-                    "directory": str(run_root),
-                    "checkpoint": str(checkpoint),
-                    "artifact_path": str(artifact.path),
-                    "config_path": str(config_path),
-                    "dataset_fingerprint": artifact.manifest.get("dataset_fingerprint"),
-                    "num_examples": artifact.manifest.get("num_examples"),
-                    "num_groups": artifact.manifest.get("num_groups"),
-                    "seed": artifact.manifest.get("seed"),
-                }
-            )
+            baseline_id = str(baseline_experiment["id"])
+            baseline_name = str(baseline_experiment["name"])
 
-        baseline_experiment, baseline_artifact, baseline_variant = loaded[baseline_id]
-        baseline_results = analyze_pair(
-            task,
-            baseline_artifact,
-            None,
-            bootstrap_samples=int(statistics_cfg.bootstrap_samples),
-            permutation_samples=int(statistics_cfg.permutation_samples),
-            seed=int(statistics_cfg.seed),
-        )
-        report_rows.extend(
-            _row(
-                task=task,
-                experiment=baseline_experiment,
-                is_baseline=True,
-                variant=baseline_variant,
-                result=result,
-                artifact=baseline_artifact,
-            )
-            for result in baseline_results
-        )
-        for experiment in experiments:
-            experiment_id = str(experiment["id"])
-            if experiment_id == baseline_id:
-                continue
-            candidate_experiment, candidate_artifact, candidate_variant = loaded[experiment_id]
-            candidate_results = analyze_pair(
+            loaded = {}
+            for experiment in experiments:
+                run_root = _resolve_run_directory(experiment)
+                if run_root not in artifact_cache:
+                    artifact_cache[run_root] = backfill_evaluation_artifact(task, run_root)
+                artifact, checkpoint, config_path = artifact_cache[run_root]
+                if artifact.manifest.get("task") != task:
+                    raise ValueError(
+                        f"Artifact {artifact.path} declares task={artifact.manifest.get('task')!r}, "
+                        f"expected {task!r}"
+                    )
+                metadata = load_run_metadata(run_root)
+                spatial = artifact.manifest.get("use_spatial_coords")
+                if spatial is None:
+                    spatial = metadata["use_spatial_coords"]
+                variant = _variant(spatial, experiment.get("report_variant"))
+                experiment_id = str(experiment["id"])
+                loaded[experiment_id] = (experiment, artifact, variant)
+                provenance_rows.append(
+                    {
+                        "task": task,
+                        "comparison_block_id": block_id,
+                        "comparison_block_name": block_name,
+                        "baseline_id": baseline_id,
+                        "baseline_name": baseline_name,
+                        "experiment_id": experiment_id,
+                        "method": str(experiment["name"]),
+                        "is_baseline": experiment_id == baseline_id,
+                        "variant": variant,
+                        "directory": str(run_root),
+                        "checkpoint": str(checkpoint),
+                        "artifact_path": str(artifact.path),
+                        "config_path": str(config_path),
+                        "dataset_fingerprint": artifact.manifest.get("dataset_fingerprint"),
+                        "num_examples": artifact.manifest.get("num_examples"),
+                        "num_groups": artifact.manifest.get("num_groups"),
+                        "seed": artifact.manifest.get("seed"),
+                    }
+                )
+
+            _, baseline_artifact, baseline_variant = loaded[baseline_id]
+            baseline_results = analyze_pair(
                 task,
                 baseline_artifact,
-                candidate_artifact,
+                None,
                 bootstrap_samples=int(statistics_cfg.bootstrap_samples),
                 permutation_samples=int(statistics_cfg.permutation_samples),
                 seed=int(statistics_cfg.seed),
@@ -198,14 +233,44 @@ def run_analysis(cfg: DictConfig) -> tuple:
             report_rows.extend(
                 _row(
                     task=task,
-                    experiment=candidate_experiment,
-                    is_baseline=False,
-                    variant=candidate_variant,
+                    block_id=block_id,
+                    block_name=block_name,
+                    baseline_id=baseline_id,
+                    baseline_name=baseline_name,
+                    experiment=baseline_experiment,
+                    is_baseline=True,
+                    variant=baseline_variant,
                     result=result,
-                    artifact=candidate_artifact,
+                    artifact=baseline_artifact,
                 )
-                for result in candidate_results
+                for result in baseline_results
             )
+            for experiment in candidates:
+                experiment_id = str(experiment["id"])
+                candidate_experiment, candidate_artifact, candidate_variant = loaded[experiment_id]
+                candidate_results = analyze_pair(
+                    task=task,
+                    baseline=baseline_artifact,
+                    candidate=candidate_artifact,
+                    bootstrap_samples=int(statistics_cfg.bootstrap_samples),
+                    permutation_samples=int(statistics_cfg.permutation_samples),
+                    seed=int(statistics_cfg.seed),
+                )
+                report_rows.extend(
+                    _row(
+                        task=task,
+                        block_id=block_id,
+                        block_name=block_name,
+                        baseline_id=baseline_id,
+                        baseline_name=baseline_name,
+                        experiment=candidate_experiment,
+                        is_baseline=False,
+                        variant=candidate_variant,
+                        result=result,
+                        artifact=candidate_artifact,
+                    )
+                    for result in candidate_results
+                )
 
     if not report_rows:
         raise ValueError("No experiments configured under tasks")

@@ -38,6 +38,10 @@ TASK_LAYOUTS: Mapping[str, Tuple[str, Sequence[Tuple[str, Sequence[str]]]]] = {
 
 CSV_FIELDS = (
     "task",
+    "comparison_block_id",
+    "comparison_block_name",
+    "baseline_id",
+    "baseline_name",
     "experiment_id",
     "method",
     "is_baseline",
@@ -138,33 +142,65 @@ def _write_task_sheet(sheet, task: str, rows: Sequence[Mapping[str, Any]]) -> No
         if end > start:
             sheet.merge_cells(start_row=1, start_column=start, end_row=1, end_column=end)
 
-    by_experiment: Dict[str, List[Mapping[str, Any]]] = {}
-    experiment_order: List[str] = []
+    by_block: Dict[str, List[Mapping[str, Any]]] = {}
+    block_order: List[str] = []
     for row in rows:
-        experiment_id = str(row["experiment_id"])
-        if experiment_id not in by_experiment:
-            experiment_order.append(experiment_id)
-            by_experiment[experiment_id] = []
-        by_experiment[experiment_id].append(row)
+        block_id = str(row.get("comparison_block_id", "default"))
+        if block_id not in by_block:
+            block_order.append(block_id)
+            by_block[block_id] = []
+        by_block[block_id].append(row)
 
     output_row = 3
-    baseline_name = next(str(row["method"]) for row in rows if row["is_baseline"])
-    for experiment_id in experiment_order:
-        experiment_rows = by_experiment[experiment_id]
-        is_baseline = bool(experiment_rows[0]["is_baseline"])
-        labels = [str(experiment_rows[0]["method"])]
-        if not is_baseline:
-            labels.extend((f"Δ vs {baseline_name} (improvement)", "p-value"))
-        for offset, label in enumerate(labels):
-            sheet.cell(output_row + offset, 1, label)
-        for row in experiment_rows:
-            target_column = metric_columns[(str(row["metric"]), str(row["variant"]))]
-            sheet.cell(output_row, target_column, _estimate_text(row))
+    block_header_rows: List[int] = []
+    for block_id in block_order:
+        block_rows = by_block[block_id]
+        block_name = str(block_rows[0].get("comparison_block_name", ""))
+        if block_name:
+            sheet.cell(output_row, 1, block_name)
+            sheet.merge_cells(
+                start_row=output_row,
+                start_column=1,
+                end_row=output_row,
+                end_column=column - 1,
+            )
+            block_header_rows.append(output_row)
+            output_row += 1
+
+        by_experiment: Dict[str, List[Mapping[str, Any]]] = {}
+        experiment_order: List[str] = []
+        for row in block_rows:
+            experiment_id = str(row["experiment_id"])
+            if experiment_id not in by_experiment:
+                experiment_order.append(experiment_id)
+                by_experiment[experiment_id] = []
+            by_experiment[experiment_id].append(row)
+
+        baseline_name = str(
+            block_rows[0].get("baseline_name")
+            or next(row["method"] for row in block_rows if row["is_baseline"])
+        )
+        for experiment_id in experiment_order:
+            experiment_rows = by_experiment[experiment_id]
+            is_baseline = bool(experiment_rows[0]["is_baseline"])
+            labels = [str(experiment_rows[0]["method"])]
             if not is_baseline:
-                sheet.cell(output_row + 1, target_column, _delta_text(row))
-                sheet.cell(output_row + 2, target_column, _pvalue_text(float(row["raw_pvalue"])))
-        output_row += len(labels)
+                labels.extend((f"Δ vs {baseline_name} (improvement)", "p-value"))
+            for offset, label in enumerate(labels):
+                sheet.cell(output_row + offset, 1, label)
+            for row in experiment_rows:
+                target_column = metric_columns[(str(row["metric"]), str(row["variant"]))]
+                sheet.cell(output_row, target_column, _estimate_text(row))
+                if not is_baseline:
+                    sheet.cell(output_row + 1, target_column, _delta_text(row))
+                    sheet.cell(output_row + 2, target_column, _pvalue_text(float(row["raw_pvalue"])))
+            output_row += len(labels)
     _style_presentation_sheet(sheet, column - 1)
+    for row_index in block_header_rows:
+        cell = sheet.cell(row_index, 1)
+        cell.fill = PatternFill("solid", fgColor="B4A7D6")
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="left", vertical="center")
 
 
 def _write_flat_sheet(sheet, rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> None:
@@ -202,6 +238,10 @@ def write_xlsx(
     _write_flat_sheet(workbook.create_sheet("Statistics"), rows, CSV_FIELDS)
     experiment_fields = (
         "task",
+        "comparison_block_id",
+        "comparison_block_name",
+        "baseline_id",
+        "baseline_name",
         "experiment_id",
         "method",
         "is_baseline",

@@ -7,107 +7,111 @@ defaults:
 experiment_root: ${oc.env:TACTILE_EXPERIMENT_ROOT,/workspace-SR004.nfs2/konovalov/tactile/experiments}
 output_dir: ${experiment_root}/significance/purple_only_signal
 
-# All patterns deliberately select the latest completed matching run. A directory
-# without either an evaluation artifact or a checkpoint is ignored.
+# Exact run roots corresponding to the purple, ``only signal`` cells in the
+# comparison tables. Keeping these paths explicit makes the report reproducible
+# when newer runs are added to the same experiment directories.
 tasks:
   force:
-    baseline: original
-    experiments:
-      - id: original
-        name: Original
-        report_variant: only_signal
-        directory: ${experiment_root}/*force*/Original*
-        select: latest
-      - id: random_64
-        name: Random baseline (64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*force*/concat_embedding_baseline_dim_64_*
-        select: latest
-      - id: mlp_32_64
-        name: MLP (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*force*/spatial_mlp_layers_32_64_*
-        select: latest
-      - id: wl2_mlp_32_64
-        name: WL (2) + MLP (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*force*/spatial_wl2_mlp_layers_32_64_*
-        select: latest
-      - id: gnn_32_64
-        name: GNN (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*force*/spatial_g*_layers_32_64_*
-        select: latest
-      - id: pretrain_wl2
-        name: Pretrain WL (2)
-        report_variant: only_signal
-        directory: ${experiment_root}/*force*/pretrained_spatial_wl2_sum192_*
-        select: latest
+    comparison_blocks:
+      - id: downstream_spatial_encoders
+        name: Downstream spatial encoders — baseline Random (64)
+        baseline:
+          id: random_64
+          name: Random baseline (64)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_dinov2/concat_embedding_baseline_dim_64_2026.07.16_16-45_2026.07.16_16-45
+        experiments:
+          - id: mlp_32_64
+            name: MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/spatial_mlp_layers_32_64_2026.07.16_10-03_2026.07.16_10-03
+          - id: wl2_mlp_32_64
+            name: WL (2) + MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/spatial_wl2_mlp_layers_32_64_2026.07.16_13-14
+          - id: gnn_32_64
+            name: GNN (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/spatial_gatv2_layers_32_64_2026.07.16_14-58
+      - id: spatial_pretraining
+        name: Spatial pretraining — baseline Original
+        baseline:
+          id: original
+          name: Original
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_dinov2/Original_2026.07.16_09-11
+        experiments:
+          - id: pretrain_wl2
+            name: Pretrain WL (2)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_spatial_wl_dinov2/pretrained_spatial_wl2_sum192_2026.07.20_09-14
 
   pose:
-    baseline: original
-    experiments:
-      - id: original
-        name: Original
-        report_variant: only_signal
-        directory: ${experiment_root}/*pose*/Original*
-        select: latest
-      - id: random_64
-        name: Random baseline (64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*pose*/concat_embedding_baseline_dim_64_*
-        select: latest
-      - id: mlp_32_64
-        name: MLP (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*pose*/spatial_mlp_layers_32_64_*
-        select: latest
-      - id: wl2_mlp_32_64
-        name: WL (2) + MLP (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*pose*/spatial_wl2_mlp_layers_32_64_*
-        select: latest
-      - id: gnn_32_64
-        name: GNN (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*pose*/spatial_g*_layers_32_64_*
-        select: latest
-      - id: pretrain_wl2
-        name: Pretrain WL (2)
-        report_variant: only_signal
-        directory: ${experiment_root}/*pose*/pretrained_spatial_wl2_sum192_*
-        select: latest
+    comparison_blocks:
+      - id: downstream_spatial_encoders
+        name: Downstream spatial encoders — baseline Random (64)
+        baseline:
+          id: random_64
+          name: Random baseline (64)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_dinov2/concat_embedding_baseline_dim_64_2026.07.16_17-17_2026.07.16_17-17
+        experiments:
+          - id: mlp_32_64
+            name: MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2/spatial_mlp_layers_32_64
+          - id: wl2_mlp_32_64
+            name: WL (2) + MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_dinov2/spatial_wl2_mlp_layers_32_64_2026.07.16_13-54
+          - id: gnn_32_64
+            name: GNN (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2/spatial_gatv2_layers_32_64_2026.07.16_15-33
+      - id: spatial_pretraining
+        name: Spatial pretraining — baseline Original
+        baseline:
+          id: original
+          name: Original
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_dinov2/Original_2026.07.16_12-21
+        experiments:
+          - id: pretrain_wl2
+            name: Pretrain WL (2)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_spatial_wl_dinov2/pretrained_spatial_wl2_sum192_2026.07.20_09-50
 
   object_classification:
-    baseline: original
-    experiments:
-      - id: original
-        name: Original
-        report_variant: only_signal
-        directory: ${experiment_root}/*object*/Original*
-        select: latest
-      - id: random_64
-        name: Random baseline (64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*object*/concat_embedding_baseline_dim_64_*
-        select: latest
-      - id: mlp_32_64
-        name: MLP (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*object*/spatial_mlp_layers_32_64_*
-        select: latest
-      - id: wl2_mlp_32_64
-        name: WL (2) + MLP (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*object*/spatial_wl2_mlp_layers_32_64_*
-        select: latest
-      - id: gnn_32_64
-        name: GNN (32->64)
-        report_variant: only_signal
-        directory: ${experiment_root}/*object*/spatial_g*_layers_32_64_*
-        select: latest
-      - id: pretrain_wl2
-        name: Pretrain WL (2)
-        report_variant: only_signal
-        directory: ${experiment_root}/*object*/pretrained_spatial_wl2_sum192_*
-        select: latest
+    comparison_blocks:
+      - id: downstream_spatial_encoders
+        name: Downstream spatial encoders — baseline Random (64)
+        baseline:
+          id: random_64
+          name: Random baseline (64)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_object_classification_dinov2/concat_embedding_baseline_dim_64_2026.07.16_17-06_2026.07.16_17-06
+        experiments:
+          - id: mlp_32_64
+            name: MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_dinov2/spatial_mlp_layers_32_64_2026.07.16_10-53
+          - id: wl2_mlp_32_64
+            name: WL (2) + MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_dinov2/spatial_wl2_mlp_layers_32_64_2026.07.16_13-32
+          # The purple table contains a GNN (32->64) value, but there is no
+          # corresponding object-classification checkpoint under experiment_root.
+          # Add it back once that run is restored instead of silently selecting a
+          # different experiment through a broad glob.
+      - id: spatial_pretraining
+        name: Spatial pretraining — baseline Original
+        baseline:
+          id: original
+          name: Original
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_object_classification_dinov2/Original_2026.07.16_09-37
+        experiments:
+          - id: pretrain_wl2
+            name: Pretrain WL (2)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_spatial_wl_dinov2/pretrained_spatial_wl2_sum192_2026.07.20_09-38

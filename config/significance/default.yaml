@@ -9,11 +9,8 @@ statistics:
 # Put any subset of the three downstreams here. Empty sections are skipped.
 tasks:
   force:
-    baseline: null
-    experiments: []
+    comparison_blocks: []
   pose:
-    baseline: null
-    experiments: []
+    comparison_blocks: []
   object_classification:
-    baseline: null
-    experiments: []
+    comparison_blocks: []
