@@ -134,9 +134,14 @@ def backfill_evaluation_artifact(task: str, run_root: Path) -> Tuple[EvaluationA
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    _, _, test_loader = _loaders_for_task(task, cfg)
+    train_loader, _, test_loader = _loaders_for_task(task, cfg)
     model = hydra.utils.instantiate(cfg.task)
     trainer = Trainer(tb_logger=NullSummaryWriter(), **cfg.trainer)
-    trainer.evaluate(model, test_loader, ckpt_path_to_eval=str(checkpoint))
+    trainer.evaluate(
+        model,
+        test_loader,
+        ckpt_path_to_eval=str(checkpoint),
+        train_loader_for_initialization=train_loader,
+    )
     artifact = load_evaluation_artifact(run_root)
     return artifact, checkpoint, config_path

@@ -518,9 +518,16 @@ class Trainer:
         module: Module,
         test_loader: torch.utils.data.DataLoader,
         ckpt_path_to_eval: Optional[str] = None,
+        train_loader_for_initialization: Optional[torch.utils.data.DataLoader] = None,
     ):
     
         self.fabric.launch()
+
+        # Some downstream tasks derive target scaling statistics from the train
+        # dataset in on_fit_start. Evaluation-only backfill skips fit entirely,
+        # so reproduce just that initialization step without iterating the loader.
+        if train_loader_for_initialization is not None and hasattr(module, "init_stats"):
+            module.init_stats(train_loader_for_initialization, self.fabric.device)
 
         test_loader = self.fabric.setup_dataloaders(test_loader, use_distributed_sampler=self.use_distributed_sampler)
         if self.state is not None and "model" in self.state:
