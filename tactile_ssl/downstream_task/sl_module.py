@@ -244,3 +244,19 @@ class SLModule(Module, nn.Module):
             )
 
         return optimizer, None, None
+
+    def _select_encoder_input_channels(self, sensor_data: torch.Tensor) -> torch.Tensor:
+        """Keep auxiliary channels in the batch while honoring the encoder contract."""
+        encoder_in_chans = getattr(self.model_encoder, "in_chans", None)
+        if encoder_in_chans is None:
+            return sensor_data
+        encoder_in_chans = int(encoder_in_chans)
+        if encoder_in_chans <= 0:
+            raise ValueError(f"model_encoder.in_chans must be positive, got {encoder_in_chans}")
+        available_channels = sensor_data.shape[-1]
+        if available_channels < encoder_in_chans:
+            raise ValueError(
+                "Sensor data has fewer channels than the encoder expects: "
+                f"got {available_channels}, expected {encoder_in_chans}"
+            )
+        return sensor_data[..., :encoder_in_chans]

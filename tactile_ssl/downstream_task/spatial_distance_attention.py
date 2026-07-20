@@ -45,10 +45,14 @@ class XelaDistanceBiasedAttentionBlock(nn.Module):
         self.eps = eps
         self.init_std = init_std
 
-        self.distance_mlp = nn.Sequential(
-            nn.Linear(1, distance_hidden_dim),
-            nn.GELU(),
-            nn.Linear(distance_hidden_dim, num_heads),
+        self.distance_mlp = (
+            nn.Sequential(
+                nn.Linear(1, distance_hidden_dim),
+                nn.GELU(),
+                nn.Linear(distance_hidden_dim, num_heads),
+            )
+            if use_distance_bias
+            else None
         )
         self.block = Block(
             dim=embed_dim,
@@ -60,8 +64,9 @@ class XelaDistanceBiasedAttentionBlock(nn.Module):
 
         self.apply(self._init_weights)
         # Start from ordinary self-attention and let geometry enter gradually.
-        nn.init.zeros_(self.distance_mlp[-1].weight)
-        nn.init.zeros_(self.distance_mlp[-1].bias)
+        if self.distance_mlp is not None:
+            nn.init.zeros_(self.distance_mlp[-1].weight)
+            nn.init.zeros_(self.distance_mlp[-1].bias)
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -89,6 +94,8 @@ class XelaDistanceBiasedAttentionBlock(nn.Module):
 
     def distance_bias(self, spatial_coords: torch.Tensor) -> torch.Tensor:
         """Return additive attention bias with shape [G, H, N, N]."""
+        if self.distance_mlp is None:
+            raise RuntimeError("distance bias is disabled for this attention block")
         self._validate_coordinates(spatial_coords)
         distances = torch.cdist(spatial_coords.float(), spatial_coords.float(), p=2)
         max_distance = distances.amax(dim=(-2, -1), keepdim=True).clamp_min(self.eps)

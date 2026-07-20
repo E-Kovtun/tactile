@@ -226,6 +226,7 @@ class XelaObjectSLModule(SLModule):
         return {key: value.to(device) if hasattr(value, "to") else value for key, value in graph_info.items()}
 
     def _forward_encoder(self, sensor_data, graph_info=None):
+        sensor_data = self._select_encoder_input_channels(sensor_data)
         if graph_info is not None and getattr(self.model_encoder, "supports_graph_info", False):
             return self.model_encoder.forward_features(sensor_data, graph_info=graph_info)
         return self.model_encoder.forward_features(sensor_data)
