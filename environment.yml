@@ -23,6 +23,7 @@ dependencies:
  - h5py
  - rich
  - seaborn
+ - openpyxl
  - pip
  - pip:
     - rootutils

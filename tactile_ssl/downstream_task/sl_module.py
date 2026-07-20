@@ -9,12 +9,14 @@
 
 
 from functools import partial
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
 from tactile_ssl.algorithm.module import Module
+from tactile_ssl.evaluation.artifacts import load_run_metadata, save_evaluation_artifact
 from tactile_ssl.utils.logging import get_pylogger
 
 log = get_pylogger(__name__)
@@ -82,6 +84,53 @@ class SLModule(Module, nn.Module):
             self.model_encoder.eval()
         self.scheduler_partial = scheduler_cfg
         self.optim_partial = optim_cfg
+        self.test_sample_id = []
+        self.test_group_id = []
+
+    def collect_test_identifiers(self, batch: Dict[str, Any]) -> None:
+        missing = [name for name in ("sample_id", "group_id") if name not in batch]
+        if missing:
+            raise KeyError(
+                "Evaluation artifact export requires stable dataset identifiers; "
+                f"missing {missing} in test batch"
+            )
+        self.test_sample_id.append(batch["sample_id"].detach())
+        self.test_group_id.append(batch["group_id"].detach())
+
+    def save_test_artifact(
+        self,
+        trainer_instance: Any,
+        *,
+        task: str,
+        y_true: torch.Tensor,
+        y_pred: torch.Tensor,
+    ) -> None:
+        """Gather and save exactly the examples evaluated by the trainer."""
+        if trainer_instance is None:
+            return
+        if not self.test_sample_id or not self.test_group_id:
+            raise RuntimeError("No test identifiers were collected")
+        sample_id = gather_batch_tensor(torch.cat(self.test_sample_id, dim=0)).cpu().numpy()
+        group_id = gather_batch_tensor(torch.cat(self.test_group_id, dim=0)).cpu().numpy()
+        y_true_np = gather_batch_tensor(y_true).cpu().numpy()
+        y_pred_np = gather_batch_tensor(y_pred).cpu().numpy()
+        if not trainer_instance.fabric.is_global_zero:
+            return
+
+        run_root = Path(trainer_instance.checkpoint_dir).resolve().parent
+        metadata = load_run_metadata(run_root)
+        save_evaluation_artifact(
+            run_root,
+            task=task,
+            sample_id=sample_id,
+            group_id=group_id,
+            y_true=y_true_np,
+            y_pred=y_pred_np,
+            checkpoint=getattr(trainer_instance, "evaluation_checkpoint_path", None),
+            seed=metadata["seed"],
+            use_spatial_coords=metadata["use_spatial_coords"],
+            extra_manifest={"config_path": metadata["config_path"]},
+        )
 
     def _configure_encoder_normalization(self, use_float32: bool) -> None:
         if not hasattr(self.model_encoder, "xela_mean") or not hasattr(self.model_encoder, "xela_std"):

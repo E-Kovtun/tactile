@@ -907,6 +907,7 @@ class XelaForceSLModule(ForceSLModule):
     def on_test_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.test_pred.append(outputs["y_pred"])
         self.test_gt.append(batch["force"])
+        self.collect_test_identifiers(batch)
 
     def on_train_epoch_end(self, trainer_instance=None):
         return self.on_epoch_end(trainer_instance, stage="train")
@@ -985,3 +986,9 @@ class XelaForceSLModule(ForceSLModule):
         if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             for i, (rmse_val, axis) in enumerate(zip([rmse, rmse_x, rmse_y, rmse_z], ["", "_x", "_y", "_z"])):
                 trainer_instance.writer.add_scalar(f"{stage}/rmse{axis}", rmse_val, 0)
+        self.save_test_artifact(
+            trainer_instance,
+            task="force",
+            y_true=forces_gt,
+            y_pred=forces_pred,
+        )

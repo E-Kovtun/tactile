@@ -13,6 +13,7 @@ from scipy.signal import savgol_filter
 import torch.utils.data as data
 
 from tactile_ssl.utils.logging import get_pylogger
+from tactile_ssl.evaluation.ids import stable_int64_id
 from tactile_ssl.data.xela.utils import (
     XELA_FLATTEN_ORDER,
     compute_interp_timestamps,
@@ -358,6 +359,11 @@ class RelativePoseDataset(data.Dataset):
             f"Timestamps: {self.timestamps.shape}, Xela array: {self.xela_array.shape}, Relative pose: {self.relative_pose_planar.shape}"
         )
         self.idx_to_episode_idx = self.get_idx_to_episode_idx(relative_pose_planar)
+        group_ids = [stable_int64_id("pose-recording", Path(path)) for path in self.datapath_list]
+        for item in self.idx_to_episode_idx:
+            group_id = group_ids[item["episode_index"]]
+            item["group_id"] = group_id
+            item["sample_id"] = stable_int64_id("pose-window", group_id, item["target_offset"])
         self.window_sensor_graphs = self.load_window_sensor_graphs()
 
         if self.target_normalize:
@@ -382,7 +388,7 @@ class RelativePoseDataset(data.Dataset):
     def get_idx_to_episode_idx(self, relative_pose_planar):
         idx_to_episode_idx = []
         episode_offset = 0
-        for _, target_data in enumerate(relative_pose_planar):
+        for episode_index, target_data in enumerate(relative_pose_planar):
             allowed_offset = len(target_data) - self.target_frames_per_window
             idx_to_episode_idx.extend(
                 [
@@ -391,6 +397,7 @@ class RelativePoseDataset(data.Dataset):
                         "episode_offset": episode_offset,
                         "input_offset": int(i * self.nominal_freq // self.pose_nominal_freq),
                         "target_offset": i,
+                        "episode_index": episode_index,
                     }
                     for i in range(0, allowed_offset)
                 ]
@@ -593,6 +600,8 @@ class RelativePoseDataset(data.Dataset):
 
         sample["target_mean"] = torch.tensor(self.target_mean).float()
         sample["target_std"] = torch.tensor(self.target_std).float()
+        sample["group_id"] = torch.tensor(self.idx_to_episode_idx[idx]["group_id"], dtype=torch.long)
+        sample["sample_id"] = torch.tensor(self.idx_to_episode_idx[idx]["sample_id"], dtype=torch.long)
         if self.window_sensor_graphs is not None:
             graph_chunks = int(np.asarray(self.window_sensor_graphs["graph_chunks_per_sample"]).item())
             graph_start = idx * graph_chunks

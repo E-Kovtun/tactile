@@ -1,0 +1,113 @@
+defaults:
+  - default
+  - _self_
+
+# Override on another server if the repository lives elsewhere:
+# TACTILE_EXPERIMENT_ROOT=/path/to/experiments
+experiment_root: ${oc.env:TACTILE_EXPERIMENT_ROOT,/workspace-SR004.nfs2/konovalov/tactile/experiments}
+output_dir: ${experiment_root}/significance/purple_only_signal
+
+# All patterns deliberately select the latest completed matching run. A directory
+# without either an evaluation artifact or a checkpoint is ignored.
+tasks:
+  force:
+    baseline: original
+    experiments:
+      - id: original
+        name: Original
+        report_variant: only_signal
+        directory: ${experiment_root}/*force*/Original*
+        select: latest
+      - id: random_64
+        name: Random baseline (64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*force*/concat_embedding_baseline_dim_64_*
+        select: latest
+      - id: mlp_32_64
+        name: MLP (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*force*/spatial_mlp_layers_32_64_*
+        select: latest
+      - id: wl2_mlp_32_64
+        name: WL (2) + MLP (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*force*/spatial_wl2_mlp_layers_32_64_*
+        select: latest
+      - id: gnn_32_64
+        name: GNN (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*force*/spatial_g*_layers_32_64_*
+        select: latest
+      - id: pretrain_wl2
+        name: Pretrain WL (2)
+        report_variant: only_signal
+        directory: ${experiment_root}/*force*/pretrained_spatial_wl2_sum192_*
+        select: latest
+
+  pose:
+    baseline: original
+    experiments:
+      - id: original
+        name: Original
+        report_variant: only_signal
+        directory: ${experiment_root}/*pose*/Original*
+        select: latest
+      - id: random_64
+        name: Random baseline (64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*pose*/concat_embedding_baseline_dim_64_*
+        select: latest
+      - id: mlp_32_64
+        name: MLP (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*pose*/spatial_mlp_layers_32_64_*
+        select: latest
+      - id: wl2_mlp_32_64
+        name: WL (2) + MLP (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*pose*/spatial_wl2_mlp_layers_32_64_*
+        select: latest
+      - id: gnn_32_64
+        name: GNN (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*pose*/spatial_g*_layers_32_64_*
+        select: latest
+      - id: pretrain_wl2
+        name: Pretrain WL (2)
+        report_variant: only_signal
+        directory: ${experiment_root}/*pose*/pretrained_spatial_wl2_sum192_*
+        select: latest
+
+  object_classification:
+    baseline: original
+    experiments:
+      - id: original
+        name: Original
+        report_variant: only_signal
+        directory: ${experiment_root}/*object*/Original*
+        select: latest
+      - id: random_64
+        name: Random baseline (64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*object*/concat_embedding_baseline_dim_64_*
+        select: latest
+      - id: mlp_32_64
+        name: MLP (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*object*/spatial_mlp_layers_32_64_*
+        select: latest
+      - id: wl2_mlp_32_64
+        name: WL (2) + MLP (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*object*/spatial_wl2_mlp_layers_32_64_*
+        select: latest
+      - id: gnn_32_64
+        name: GNN (32->64)
+        report_variant: only_signal
+        directory: ${experiment_root}/*object*/spatial_g*_layers_32_64_*
+        select: latest
+      - id: pretrain_wl2
+        name: Pretrain WL (2)
+        report_variant: only_signal
+        directory: ${experiment_root}/*object*/pretrained_spatial_wl2_sum192_*
+        select: latest

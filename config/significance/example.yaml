@@ -1,0 +1,30 @@
+defaults:
+  - default
+  - _self_
+
+output_dir: reports/spatial_significance
+
+tasks:
+  force:
+    baseline: original
+    experiments:
+      - id: original
+        name: Original
+        directory: /path/to/downstream_force_original_run
+      - id: spatial_wl
+        name: Pretrain WL (2)
+        directory: /path/to/downstream_force_spatial_wl_run
+
+  pose:
+    baseline: original
+    experiments:
+      - id: original
+        name: Original
+        directory: /path/to/downstream_pose_original_run
+
+  object_classification:
+    baseline: original
+    experiments:
+      - id: original
+        name: Original
+        directory: /path/to/downstream_object_original_run

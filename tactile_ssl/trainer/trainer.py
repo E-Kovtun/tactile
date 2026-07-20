@@ -533,6 +533,9 @@ class Trainer:
         if (ckpt_path_to_eval is None) and self.use_early_stopping:
             ckpt_path_to_eval = os.path.join(self.checkpoint_dir, f"{self.early_stopping_checkpoint_name}.ckpt")
 
+        if ckpt_path_to_eval is None:
+            raise ValueError("A downstream checkpoint is required for evaluation")
+        self.evaluation_checkpoint_path = str(ckpt_path_to_eval)
         module.load_task(ckpt_path_to_eval)
         self.test_loop(module, test_loader)
         self._teardown_distributed()

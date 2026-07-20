@@ -13,6 +13,7 @@ from scipy.signal import savgol_filter
 import torch.utils.data as data
 
 from tactile_ssl.utils.logging import get_pylogger
+from tactile_ssl.evaluation.ids import stable_int64_id
 from tactile_ssl.data.xela.utils import (
     XELA_FLATTEN_ORDER,
     compute_interp_timestamps,
@@ -391,6 +392,11 @@ class ForceDataset(data.Dataset):
         )
 
         self.idx_to_episode_idx = self.get_idx_to_episode_idx(force_data)
+        group_ids = [stable_int64_id("force-recording", Path(path)) for path in self.datapath_list]
+        for item in self.idx_to_episode_idx:
+            group_id = group_ids[item["episode_index"]]
+            item["group_id"] = group_id
+            item["sample_id"] = stable_int64_id("force-window", group_id, item["target_offset"])
         self.window_sensor_graphs = self.load_window_sensor_graphs()
 
         if self.target_normalize:
@@ -481,7 +487,7 @@ class ForceDataset(data.Dataset):
         idx_to_episode_idx = []
         episode_offset = 0
 
-        for _, target_data in enumerate(force_data):
+        for episode_index, target_data in enumerate(force_data):
             in_contact = np.zeros(target_data.shape[0], dtype=bool)
             in_contact[target_data[:, -1] > np.float64(self.normal_force_contact_threshold)] = True
             in_contact = savgol_filter(in_contact, 5, 3) > 0.5
@@ -493,6 +499,7 @@ class ForceDataset(data.Dataset):
                         "episode_offset": episode_offset,
                         "input_offset": int(i * self.nominal_freq // self.force_nominal_freq),
                         "target_offset": i,
+                        "episode_index": episode_index,
                     }
                     for i in range(self.target_frames_per_window, len(target_data))
                     if in_contact[i]
@@ -564,6 +571,8 @@ class ForceDataset(data.Dataset):
         sample["sensor"] = torch.tensor(sensor_data).float()
         sample["sensor_force"] = torch.tensor(sensor_force_data).float()
         sample["force"] = torch.tensor(force_data).float()
+        sample["group_id"] = torch.tensor(self.idx_to_episode_idx[idx]["group_id"], dtype=torch.long)
+        sample["sample_id"] = torch.tensor(self.idx_to_episode_idx[idx]["sample_id"], dtype=torch.long)
         if self.window_sensor_graphs is not None:
             graph_chunks = int(np.asarray(self.window_sensor_graphs["graph_chunks_per_sample"]).item())
             graph_start = idx * graph_chunks

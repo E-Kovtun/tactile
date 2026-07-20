@@ -1,0 +1,19 @@
+output_dir: reports/spatial_significance
+
+statistics:
+  bootstrap_samples: 10000
+  permutation_samples: 10000
+  confidence_level: 0.95
+  seed: 42
+
+# Put any subset of the three downstreams here. Empty sections are skipped.
+tasks:
+  force:
+    baseline: null
+    experiments: []
+  pose:
+    baseline: null
+    experiments: []
+  object_classification:
+    baseline: null
+    experiments: []

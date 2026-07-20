@@ -13,6 +13,7 @@ from tactile_ssl.data.xela.preprocessing import load_cached_xela_sequence
 from tactile_ssl.data.xela.utils import (
     XELA_FLATTEN_ORDER,
 )
+from tactile_ssl.evaluation.ids import stable_int64_id
 from tactile_ssl.utils.logging import get_pylogger
 
 torch.set_printoptions(precision=4, sci_mode=False)
@@ -83,6 +84,7 @@ class XelaSSLDataset(data.Dataset):
         assert Path(xela_urdf_path).exists(), f"{xela_urdf_path} does not exist"
 
         self.data_path = data_path
+        self.evaluation_group_id = stable_int64_id("xela-recording", Path(data_path))
         self.baseline_signal_path = baseline_signal_path
         self.xela_mean, self.xela_std = None, None
 
@@ -144,6 +146,10 @@ class XelaSSLDataset(data.Dataset):
         max_length = max_length - self.num_frames_per_window
 
         self.data_idxs = np.arange(0, max_length, self.shift_per_window)
+        self.evaluation_sample_ids = np.asarray(
+            [stable_int64_id("xela-window", self.evaluation_group_id, int(index)) for index in self.data_idxs],
+            dtype=np.int64,
+        )
         if self.window_sensor_graphs is not None:
             graph_window_start = self.window_sensor_graphs["graph_window_start"]
             if graph_window_start.shape != self.data_idxs.shape or not np.array_equal(graph_window_start, self.data_idxs):
@@ -225,6 +231,12 @@ class XelaSSLDataset(data.Dataset):
         sample_dict.update({"sensor": sensor_data})
         sample_dict.update({"joint_angles": joint_angles})
         sample_dict.update({"sensor_poses": sensor_poses})
+        sample_dict.update(
+            {
+                "group_id": torch.tensor(self.evaluation_group_id, dtype=torch.long),
+                "sample_id": torch.tensor(self.evaluation_sample_ids[sample_idx], dtype=torch.long),
+            }
+        )
         if self.window_sensor_graphs is not None:
             edge_count = int(self.window_sensor_graphs["graph_edge_count"][sample_idx])
             graph = {

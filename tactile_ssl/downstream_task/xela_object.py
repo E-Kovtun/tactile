@@ -310,6 +310,7 @@ class XelaObjectSLModule(SLModule):
     def on_test_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.test_pred.append(outputs["pred_labels"])
         self.test_gt.append(batch["object_classification"])
+        self.collect_test_identifiers(batch)
 
     def on_train_epoch_end(self, trainer_instance=None):
         return self.on_epoch_end(trainer_instance, stage="train")
@@ -354,3 +355,9 @@ class XelaObjectSLModule(SLModule):
         test_accuracy = (target_pred == target_gt).mean()
         if trainer_instance is not None and trainer_instance.fabric.is_global_zero:
             trainer_instance.writer.add_scalar(f"{stage}/accuracy", test_accuracy, 0)
+        self.save_test_artifact(
+            trainer_instance,
+            task="object_classification",
+            y_true=torch.cat(self.test_gt, dim=0),
+            y_pred=torch.cat(self.test_pred, dim=0),
+        )

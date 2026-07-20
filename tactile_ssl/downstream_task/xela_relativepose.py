@@ -539,6 +539,7 @@ class XelaRelativePoseModule(SLModule):
     def on_test_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         self.test_pred.append(outputs["y_pred"])
         self.test_gt.append(batch["relative_object_pose"])
+        self.collect_test_identifiers(batch)
 
     def on_train_epoch_end(self, trainer_instance=None):
         return self.on_epoch_end(trainer_instance, stage="train")
@@ -640,8 +641,10 @@ class XelaRelativePoseModule(SLModule):
 
     def on_test_end(self, trainer_instance=None, stage="test"):
 
-        relative_pose_gt = gather_batch_tensor(torch.cat(self.test_gt, dim=0)).cpu().numpy()
-        relative_pose_pred = gather_batch_tensor(torch.cat(self.test_pred, dim=0)).cpu().numpy()
+        local_pose_gt = torch.cat(self.test_gt, dim=0)
+        local_pose_pred = torch.cat(self.test_pred, dim=0)
+        relative_pose_gt = gather_batch_tensor(local_pose_gt).cpu().numpy()
+        relative_pose_pred = gather_batch_tensor(local_pose_pred).cpu().numpy()
             
         rmse = np.sqrt(np.mean((relative_pose_gt - relative_pose_pred) ** 2))
         rmse_x = np.sqrt(np.mean((relative_pose_gt[:, :, 0] - relative_pose_pred[:, :, 0]) ** 2))
@@ -661,3 +664,9 @@ class XelaRelativePoseModule(SLModule):
 
             for i, (auc_val, axis) in enumerate(zip([auc_x_1mm, auc_y_1mm, auc_theta_1deg], ["_x", "_y", "_theta"])):
                 trainer_instance.writer.add_scalar(f"{stage}/acc{axis}", auc_val, 0)
+        self.save_test_artifact(
+            trainer_instance,
+            task="pose",
+            y_true=local_pose_gt,
+            y_pred=local_pose_pred,
+        )
