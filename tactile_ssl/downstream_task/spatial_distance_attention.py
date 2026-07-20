@@ -1,4 +1,4 @@
-"""Supervised spatial self-attention driven by pairwise sensor distances."""
+"""Supervised spatial self-attention driven by relative sensor geometry."""
 
 from typing import Optional
 
@@ -10,7 +10,7 @@ from tactile_ssl.model.layers.block import Block
 
 
 class XelaDistanceBiasedAttentionBlock(nn.Module):
-    """Transformer block with a learned per-head bias from pairwise distances."""
+    """Transformer block with a learned per-head bias from relative geometry."""
 
     def __init__(
         self,
@@ -23,6 +23,7 @@ class XelaDistanceBiasedAttentionBlock(nn.Module):
         init_std: float = 0.02,
         eps: float = 1e-8,
         use_distance_bias: bool = True,
+        use_directional_bias: bool = False,
     ) -> None:
         super().__init__()
         if embed_dim <= 0:
@@ -37,17 +38,20 @@ class XelaDistanceBiasedAttentionBlock(nn.Module):
             raise ValueError(f"Xela coordinates must have exactly three channels; got {coordinate_dim}")
         if eps <= 0:
             raise ValueError("eps must be positive")
+        if use_directional_bias and not use_distance_bias:
+            raise ValueError("use_directional_bias requires use_distance_bias")
 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.coordinate_dim = coordinate_dim
         self.use_distance_bias = use_distance_bias
+        self.use_directional_bias = use_directional_bias
         self.eps = eps
         self.init_std = init_std
 
         self.distance_mlp = (
             nn.Sequential(
-                nn.Linear(1, distance_hidden_dim),
+                nn.Linear(4 if use_directional_bias else 1, distance_hidden_dim),
                 nn.GELU(),
                 nn.Linear(distance_hidden_dim, num_heads),
             )
@@ -93,15 +97,25 @@ class XelaDistanceBiasedAttentionBlock(nn.Module):
             raise ValueError("spatial_coords must contain only finite values")
 
     def distance_bias(self, spatial_coords: torch.Tensor) -> torch.Tensor:
-        """Return additive attention bias with shape [G, H, N, N]."""
+        """Return additive attention bias with shape [G, H, N, N].
+
+        Directional mode uses normalized ``(dx, dy, dz, distance)``. It is
+        translation and scale invariant, but deliberately retains direction in
+        the sensor coordinate frame.
+        """
         if self.distance_mlp is None:
             raise RuntimeError("distance bias is disabled for this attention block")
         self._validate_coordinates(spatial_coords)
         distances = torch.cdist(spatial_coords.float(), spatial_coords.float(), p=2)
         max_distance = distances.amax(dim=(-2, -1), keepdim=True).clamp_min(self.eps)
         normalized_distances = distances / max_distance
+        geometry = normalized_distances.unsqueeze(-1)
+        if self.use_directional_bias:
+            relative_vectors = spatial_coords.float().unsqueeze(2) - spatial_coords.float().unsqueeze(1)
+            normalized_vectors = relative_vectors / max_distance.unsqueeze(-1)
+            geometry = torch.cat([normalized_vectors, geometry], dim=-1)
         mlp_dtype = self.distance_mlp[0].weight.dtype
-        bias = self.distance_mlp(normalized_distances.unsqueeze(-1).to(dtype=mlp_dtype))
+        bias = self.distance_mlp(geometry.to(dtype=mlp_dtype))
         return bias.permute(0, 3, 1, 2).contiguous()
 
     def forward(

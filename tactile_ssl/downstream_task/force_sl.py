@@ -677,6 +677,7 @@ class XelaForceSpatialAttentionProbe(XelaForceLinearProbe):
         spatial_attention_heads: int = 12,
         spatial_distance_hidden_dim: int = 16,
         spatial_distance_bias: bool = True,
+        spatial_directional_bias: bool = False,
         coordinate_dim: int = 3,
         **kwargs,
     ):
@@ -686,6 +687,7 @@ class XelaForceSpatialAttentionProbe(XelaForceLinearProbe):
 
         embed_dim = self.layer_norm.normalized_shape[0]
         self.spatial_distance_bias = spatial_distance_bias
+        self.spatial_directional_bias = spatial_directional_bias
         self.coordinate_dim = coordinate_dim
         self.spatial_attention_blocks = nn.ModuleList(
             [
@@ -696,6 +698,7 @@ class XelaForceSpatialAttentionProbe(XelaForceLinearProbe):
                     coordinate_dim=coordinate_dim,
                     init_std=self.init_std,
                     use_distance_bias=spatial_distance_bias,
+                    use_directional_bias=spatial_directional_bias,
                 )
                 for _ in range(spatial_attention_layers)
             ]

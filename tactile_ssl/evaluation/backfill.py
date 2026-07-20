@@ -96,7 +96,13 @@ def _loaders_for_task(task: str, cfg: DictConfig):
     for name, resolver in common_resolvers.items():
         if not OmegaConf.has_resolver(name):
             OmegaConf.register_new_resolver(name, resolver)
-    OmegaConf.resolve(cfg)
+    # Do not resolve the complete run config here. Some downstream loaders fill
+    # values derived from the training dataset before model instantiation. In
+    # particular, object classification replaces ``data.object_classes`` and
+    # ``data.object_class_weights`` after scanning the datasets. Resolving now
+    # would freeze the corresponding ``task.model_task`` interpolations as None.
+    # OmegaConf resolves the individual values lazily when the loader and Hydra
+    # access them, once all task-specific derived fields are available.
     return module.get_dataloaders(cfg)
 
 

@@ -1,0 +1,32 @@
+defaults:
+  - default
+  - _self_
+
+experiment_root: ${oc.env:TACTILE_EXPERIMENT_ROOT,/workspace-SR004.nfs2/konovalov/tactile/experiments}
+output_dir: ${experiment_root}/significance/force_directional_attention
+
+tasks:
+  force:
+    baseline: attention_baseline
+    experiments:
+      - id: attention_baseline
+        name: Attention baseline
+        report_variant: only_signal
+        directory: ${experiment_root}/downstream_force_dinov2_nopos/attention_baseline_l1_h12_2026.07.17_11-10
+      - id: distance_attention
+        name: Distance attention bias
+        report_variant: only_signal
+        directory: ${experiment_root}/downstream_force_dinov2_nopos/spatial_distance_attention_l1_h12_2026.07.17_11-25
+      - id: directional_attention
+        name: Directional relative attention bias
+        report_variant: only_signal
+        directory: ${experiment_root}/downstream_force_dinov2_nopos/spatial_directional_attention_l1_h12_*
+        select: latest
+
+  pose:
+    baseline: null
+    experiments: []
+
+  object_classification:
+    baseline: null
+    experiments: []
