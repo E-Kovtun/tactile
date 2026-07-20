@@ -1,0 +1,195 @@
+defaults:
+  - default
+  - _self_
+
+# Override either root when the runs are mounted elsewhere.
+experiment_root: ${oc.env:TACTILE_EXPERIMENT_ROOT,/workspace-SR004.nfs2/konovalov/tactile/experiments}
+jepa_experiment_root: ${oc.env:JEPA_EXPERIMENT_ROOT,/workspace-SR004.nfs2/kovtun/tactile/experiments}
+output_dir: ${experiment_root}/significance/purple_only_signal_with_jepa
+
+tasks:
+  force:
+    comparison_blocks:
+      - id: downstream_spatial_encoders
+        name: Downstream spatial encoders — baseline Random (64)
+        baseline:
+          id: random_64
+          name: Random baseline (64)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_dinov2/concat_embedding_baseline_dim_64_2026.07.16_16-45_2026.07.16_16-45
+        experiments:
+          - id: mlp_32_64
+            name: MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/spatial_mlp_layers_32_64_2026.07.16_10-03_2026.07.16_10-03
+          - id: wl2_mlp_32_64
+            name: WL (2) + MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/spatial_wl2_mlp_layers_32_64_2026.07.16_13-14
+          - id: gnn_32_64
+            name: GNN (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/spatial_gatv2_layers_32_64_2026.07.16_14-58
+      - id: spatial_pretraining
+        name: Spatial pretraining — baseline Original
+        baseline:
+          id: original
+          name: Original
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_dinov2/Original_2026.07.16_09-11
+        experiments:
+          - id: pretrain_wl2
+            name: Pretrain WL (2)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_spatial_wl_dinov2/pretrained_spatial_wl2_sum192_2026.07.20_09-14
+      - id: jepa_masking
+        name: JEPA masking — baseline JEPA transformer (old)
+        baseline:
+          id: jepa_transformer_old
+          name: JEPA transformer (old)
+          report_variant: only_signal
+          directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.06.29_09-25_2026.06.29_09-25
+        experiments:
+          - id: jepa_1c_4t
+            name: JEPA transformer (1, 4)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.06.30_10-44_2026.06.30_10-44
+          - id: jepa_2c_4t
+            name: JEPA (2, 4)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.01_08-24_2026.07.01_08-24
+          - id: jepa_contiguous_1c_2t
+            name: JEPA contiguous (1, 2)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.02_10-18_2026.07.02_10-18
+          - id: jepa_mix_2c_4t
+            name: JEPA (2, 4) — mix random/contiguous
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.03_09-41_2026.07.03_09-41
+          - id: jepa_random_1c_2t
+            name: JEPA random (1, 2)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.13_10-16_2026.07.13_10-16
+
+  pose:
+    comparison_blocks:
+      - id: downstream_spatial_encoders
+        name: Downstream spatial encoders — baseline Random (64)
+        baseline:
+          id: random_64
+          name: Random baseline (64)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_dinov2/concat_embedding_baseline_dim_64_2026.07.16_17-17_2026.07.16_17-17
+        experiments:
+          - id: mlp_32_64
+            name: MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2/spatial_mlp_layers_32_64
+          - id: wl2_mlp_32_64
+            name: WL (2) + MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_dinov2/spatial_wl2_mlp_layers_32_64_2026.07.16_13-54
+          - id: gnn_32_64
+            name: GNN (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2/spatial_gatv2_layers_32_64_2026.07.16_15-33
+      - id: spatial_pretraining
+        name: Spatial pretraining — baseline Original
+        baseline:
+          id: original
+          name: Original
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_dinov2/Original_2026.07.16_12-21
+        experiments:
+          - id: pretrain_wl2
+            name: Pretrain WL (2)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_spatial_wl_dinov2/pretrained_spatial_wl2_sum192_2026.07.20_09-50
+      - id: jepa_masking
+        name: JEPA masking — baseline JEPA transformer (old)
+        baseline:
+          id: jepa_transformer_old
+          name: JEPA transformer (old)
+          report_variant: only_signal
+          directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.06.29_09-37
+        experiments:
+          - id: jepa_1c_4t
+            name: JEPA transformer (1, 4)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.06.30_10-51
+          - id: jepa_2c_4t
+            name: JEPA (2, 4)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.01_08-26
+          - id: jepa_contiguous_1c_2t
+            name: JEPA contiguous (1, 2)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.02_10-19
+          - id: jepa_mix_2c_4t
+            name: JEPA (2, 4) — mix random/contiguous
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.03_09-42
+          - id: jepa_random_1c_2t
+            name: JEPA random (1, 2)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.13_10-16
+
+  object_classification:
+    comparison_blocks:
+      - id: downstream_spatial_encoders
+        name: Downstream spatial encoders — baseline Random (64)
+        baseline:
+          id: random_64
+          name: Random baseline (64)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_object_classification_dinov2/concat_embedding_baseline_dim_64_2026.07.16_17-06_2026.07.16_17-06
+        experiments:
+          - id: mlp_32_64
+            name: MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_dinov2/spatial_mlp_layers_32_64_2026.07.16_10-53
+          - id: wl2_mlp_32_64
+            name: WL (2) + MLP (32->64)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_dinov2/spatial_wl2_mlp_layers_32_64_2026.07.16_13-32
+          # The object-classification GNN checkpoint is not present.
+      - id: spatial_pretraining
+        name: Spatial pretraining — baseline Original
+        baseline:
+          id: original
+          name: Original
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_object_classification_dinov2/Original_2026.07.16_09-37
+        experiments:
+          - id: pretrain_wl2
+            name: Pretrain WL (2)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_spatial_wl_dinov2/pretrained_spatial_wl2_sum192_2026.07.20_09-38
+      - id: jepa_masking
+        name: JEPA masking — baseline JEPA transformer (old)
+        baseline:
+          id: jepa_transformer_old
+          name: JEPA transformer (old)
+          report_variant: only_signal
+          directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.06.29_09-14_2026.06.29_09-14
+        experiments:
+          - id: jepa_1c_4t
+            name: JEPA transformer (1, 4)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.06.30_10-46_2026.06.30_10-46
+          - id: jepa_2c_4t
+            name: JEPA (2, 4)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.01_08-25_2026.07.01_08-25
+          - id: jepa_contiguous_1c_2t
+            name: JEPA contiguous (1, 2)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.02_10-20_2026.07.02_10-20
+          - id: jepa_mix_2c_4t
+            name: JEPA (2, 4) — mix random/contiguous
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.03_09-42_2026.07.03_09-42
+          - id: jepa_random_1c_2t
+            name: JEPA random (1, 2)
+            report_variant: only_signal
+            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.13_10-16_2026.07.13_10-16
