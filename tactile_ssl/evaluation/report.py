@@ -42,6 +42,8 @@ CSV_FIELDS = (
     "comparison_block_name",
     "baseline_id",
     "baseline_name",
+    "statistics_cache_key",
+    "statistics_cache_hit",
     "experiment_id",
     "method",
     "is_baseline",
@@ -153,6 +155,10 @@ def _write_task_sheet(sheet, task: str, rows: Sequence[Mapping[str, Any]]) -> No
 
     output_row = 3
     block_header_rows: List[int] = []
+    baseline_rows: List[int] = []
+    method_rows: List[int] = []
+    delta_rows: List[int] = []
+    pvalue_rows: List[int] = []
     for block_id in block_order:
         block_rows = by_block[block_id]
         block_name = str(block_rows[0].get("comparison_block_name", ""))
@@ -194,13 +200,28 @@ def _write_task_sheet(sheet, task: str, rows: Sequence[Mapping[str, Any]]) -> No
                 if not is_baseline:
                     sheet.cell(output_row + 1, target_column, _delta_text(row))
                     sheet.cell(output_row + 2, target_column, _pvalue_text(float(row["raw_pvalue"])))
+            if is_baseline:
+                baseline_rows.append(output_row)
+            else:
+                method_rows.append(output_row)
+                delta_rows.append(output_row + 1)
+                pvalue_rows.append(output_row + 2)
             output_row += len(labels)
     _style_presentation_sheet(sheet, column - 1)
-    for row_index in block_header_rows:
-        cell = sheet.cell(row_index, 1)
-        cell.fill = PatternFill("solid", fgColor="B4A7D6")
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="left", vertical="center")
+    row_styles = (
+        (block_header_rows, "FFDED4ED", True),
+        (baseline_rows, "FFD9EAF7", True),
+        (method_rows, "FFE2F0D9", False),
+        (delta_rows, "FFFCE4D6", False),
+        (pvalue_rows, "FFFFF2CC", False),
+    )
+    for row_indices, color, bold in row_styles:
+        for row_index in row_indices:
+            for cell in sheet[row_index][: column - 1]:
+                cell.fill = PatternFill("solid", fgColor=color)
+                if bold:
+                    cell.font = Font(bold=True)
+            sheet.cell(row_index, 1).alignment = Alignment(vertical="center", wrap_text=True)
 
 
 def _write_flat_sheet(sheet, rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> None:

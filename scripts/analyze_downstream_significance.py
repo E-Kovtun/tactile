@@ -15,7 +15,7 @@ rootutils.setup_root(__file__, indicator=".git", pythonpath=True)
 from tactile_ssl.evaluation.artifacts import load_run_metadata
 from tactile_ssl.evaluation.backfill import backfill_evaluation_artifact
 from tactile_ssl.evaluation.report import write_reports
-from tactile_ssl.evaluation.statistics import analyze_pair
+from tactile_ssl.evaluation.statistics_cache import analyze_pair_cached
 
 
 TASK_ALIASES = {
@@ -84,6 +84,8 @@ def _row(
     block_name: str,
     baseline_id: str,
     baseline_name: str,
+    statistics_cache_key: str,
+    statistics_cache_hit: bool,
     experiment: Mapping[str, Any],
     is_baseline: bool,
     variant: str,
@@ -97,6 +99,8 @@ def _row(
         "comparison_block_name": block_name,
         "baseline_id": baseline_id,
         "baseline_name": baseline_name,
+        "statistics_cache_key": statistics_cache_key,
+        "statistics_cache_hit": statistics_cache_hit,
         "experiment_id": str(experiment["id"]),
         "method": str(experiment["name"]),
         "is_baseline": is_baseline,
@@ -153,6 +157,8 @@ def _comparison_blocks(task_name: str, task_cfg: Mapping[str, Any]) -> List[Dict
 
 def run_analysis(cfg: DictConfig) -> tuple:
     statistics_cfg = cfg.statistics
+    output_dir = Path(hydra.utils.to_absolute_path(str(cfg.output_dir))).resolve()
+    statistics_cache_dir = output_dir / "statistics_cache"
     report_rows: List[Dict[str, Any]] = []
     provenance_rows: List[Dict[str, Any]] = []
 
@@ -222,13 +228,18 @@ def run_analysis(cfg: DictConfig) -> tuple:
                 )
 
             _, baseline_artifact, baseline_variant = loaded[baseline_id]
-            baseline_results = analyze_pair(
+            baseline_results, baseline_cache_key, baseline_cache_hit = analyze_pair_cached(
+                statistics_cache_dir,
                 task,
                 baseline_artifact,
                 None,
                 bootstrap_samples=int(statistics_cfg.bootstrap_samples),
                 permutation_samples=int(statistics_cfg.permutation_samples),
                 seed=int(statistics_cfg.seed),
+            )
+            print(
+                f"Statistics cache {'HIT' if baseline_cache_hit else 'MISS'}: "
+                f"{task}/{block_id}/{baseline_id}"
             )
             report_rows.extend(
                 _row(
@@ -237,6 +248,8 @@ def run_analysis(cfg: DictConfig) -> tuple:
                     block_name=block_name,
                     baseline_id=baseline_id,
                     baseline_name=baseline_name,
+                    statistics_cache_key=baseline_cache_key,
+                    statistics_cache_hit=baseline_cache_hit,
                     experiment=baseline_experiment,
                     is_baseline=True,
                     variant=baseline_variant,
@@ -248,13 +261,18 @@ def run_analysis(cfg: DictConfig) -> tuple:
             for experiment in candidates:
                 experiment_id = str(experiment["id"])
                 candidate_experiment, candidate_artifact, candidate_variant = loaded[experiment_id]
-                candidate_results = analyze_pair(
+                candidate_results, candidate_cache_key, candidate_cache_hit = analyze_pair_cached(
+                    statistics_cache_dir,
                     task=task,
                     baseline=baseline_artifact,
                     candidate=candidate_artifact,
                     bootstrap_samples=int(statistics_cfg.bootstrap_samples),
                     permutation_samples=int(statistics_cfg.permutation_samples),
                     seed=int(statistics_cfg.seed),
+                )
+                print(
+                    f"Statistics cache {'HIT' if candidate_cache_hit else 'MISS'}: "
+                    f"{task}/{block_id}/{experiment_id} vs {baseline_id}"
                 )
                 report_rows.extend(
                     _row(
@@ -263,6 +281,8 @@ def run_analysis(cfg: DictConfig) -> tuple:
                         block_name=block_name,
                         baseline_id=baseline_id,
                         baseline_name=baseline_name,
+                        statistics_cache_key=candidate_cache_key,
+                        statistics_cache_hit=candidate_cache_hit,
                         experiment=candidate_experiment,
                         is_baseline=False,
                         variant=candidate_variant,
@@ -274,7 +294,6 @@ def run_analysis(cfg: DictConfig) -> tuple:
 
     if not report_rows:
         raise ValueError("No experiments configured under tasks")
-    output_dir = Path(hydra.utils.to_absolute_path(str(cfg.output_dir))).resolve()
     return write_reports(output_dir, report_rows, provenance_rows)
 
 
