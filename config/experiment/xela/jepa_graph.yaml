@@ -1,0 +1,33 @@
+# @package _global_
+defaults:
+  - override /paths: default
+  - override /tensorboard: tensorboard_config
+  - override /data: xela
+  - override /algorithm: xela_jepa_graph
+  - _self_
+
+model_size: tiny
+ckpt_path: ~
+
+task_name: pretrain_transformer_encoder
+ssl_name: jepa_graph
+ssl_model_size: tiny
+experiment_name: ${task_name}_${ssl_name}
+seed: 42
+
+run_name: physical_dijkstra
+
+data:
+  dataset_target: tactile_ssl.data.xela_tactile.XelaGraphSSLDataset
+  graph:
+    enabled: true
+    type: physical
+    topology_mode: per_window
+    edge_attr_mode: distance
+    params:
+      bridge_k: 2
+
+trainer:
+  max_epochs: 500
+  validation_frequency: 5
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints

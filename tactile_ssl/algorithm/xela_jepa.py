@@ -14,6 +14,7 @@ from tactile_ssl.algorithm.module import Module
 from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.utils.ema import update_moving_average
 from tactile_ssl.utils.masking import sample_block_mask, sample_block_size_1d
+from tactile_ssl.utils.jepa_masking import sample_multiblock_graph_masks
 from tactile_ssl.model.signal_transformer import SignalDecoder
 
 
@@ -112,6 +113,7 @@ class XelaJEPAModule(Module, nn.Module):
         num_target_masks: int = 4,
         moving_average_decay: Union[float, Tuple[float, ...]] = 0.99,
         use_momentum: bool = True,
+        masking: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -141,6 +143,7 @@ class XelaJEPAModule(Module, nn.Module):
         self.target_mask_scale = target_mask_scale
         self.num_context_masks = num_context_masks
         self.num_target_masks = num_target_masks
+        self.masking = masking
 
         self.generator = torch.Generator()
         self.step = -1
@@ -171,11 +174,54 @@ class XelaJEPAModule(Module, nn.Module):
     def on_validation_batch_end(self, outputs: Dict, batch: Dict, batch_idx: int, trainer_instance=None):
         self.log_on_batch_end(outputs, stage="val", trainer_instance=trainer_instance)
 
-    def sample_jepa_masks(self, x):
+    def sample_jepa_masks(self, x, graph_info: Optional[Dict[str, torch.Tensor]] = None):
         batch_size, _, num_sensors, _ = x.shape
 
         context_maskblock_size = sample_block_size_1d(num_sensors, self.context_mask_scale)[0]
         target_maskblock_size = sample_block_size_1d(num_sensors, self.target_mask_scale)[0]
+
+        if self.masking is not None and str(self.masking.get("mode", "legacy")) != "legacy":
+            mode = str(self.masking.get("mode"))
+            if mode != "multiblock_graph":
+                raise ValueError(f"Unsupported JEPA masking mode {mode!r}")
+            if graph_info is None:
+                raise ValueError("multiblock_graph masking requires batch['graph']")
+
+            context_cfg = self.masking.get("context", {})
+            target_cfg = self.masking.get("target", {})
+            overlap_cfg = self.masking.get("overlap", {})
+            expected_overlap = {
+                "target_target": "allow",
+                "context_target": "subtract_from_context",
+                "context_context": "allow",
+            }
+            actual_overlap = {
+                key: str(overlap_cfg.get(key, value)) for key, value in expected_overlap.items()
+            }
+            if actual_overlap != expected_overlap:
+                raise ValueError(
+                    "multiblock_graph currently supports only I-JEPA overlap semantics: "
+                    f"{expected_overlap}; got {actual_overlap}"
+                )
+
+            return sample_multiblock_graph_masks(
+                graph_info=graph_info,
+                batch_size=batch_size,
+                num_nodes=num_sensors,
+                context_size=context_maskblock_size,
+                target_size=target_maskblock_size,
+                num_context_masks=self.num_context_masks,
+                num_target_masks=self.num_target_masks,
+                context_strategy=str(context_cfg.get("strategy", "connected_region")),
+                target_strategy=str(target_cfg.get("strategy", "connected_region")),
+                context_growth=str(context_cfg.get("growth", "dijkstra")),
+                target_growth=str(target_cfg.get("growth", "dijkstra")),
+                min_context_keep_tokens=int(self.masking.get("min_context_keep_tokens", 32)),
+                min_context_keep_ratio=float(self.masking.get("min_context_keep_ratio", 0.15)),
+                max_resample_attempts=int(self.masking.get("max_resample_attempts", 32)),
+                device=x.device,
+                generator=self.generator,
+            )
 
         context_masks, target_masks = self.sample_context_target_masks(batch_size=batch_size, orig_shape=num_sensors, 
             context_mask_shape=context_maskblock_size, num_context_masks=self.num_context_masks, 
@@ -341,7 +387,7 @@ class XelaJEPAModule(Module, nn.Module):
         self.step = self.step + 1
         self.generator.manual_seed(self.step)
         x = batch["sensor"]
-        context_masks, target_masks = self.sample_jepa_masks(x)
+        context_masks, target_masks = self.sample_jepa_masks(x, graph_info=batch.get("graph"))
 
         ssl_loss = self.forward(x, context_masks, target_masks)
 

@@ -38,6 +38,15 @@ preprocessing:
 features:
   use_spatial_coords: false
 
+dataset_target: tactile_ssl.data.xela_tactile.XelaSSLDataset
+graph:
+  enabled: false
+  type: physical
+  topology_mode: per_window
+  edge_attr_mode: distance
+  params:
+    bridge_k: 2
+
 window_time: 0.1 # 0.01
 window_overlap: 0.0
 interpolating_freq: 100
@@ -64,7 +73,7 @@ dataset_list:
     val_dataset_ids: [9]
 
     dataset:
-      _target_: tactile_ssl.data.xela_tactile.XelaSSLDataset
+      _target_: ${data.dataset_target}
       config:
         window_time: ${data.window_time}
         window_overlap: ${data.window_overlap}
@@ -76,6 +85,7 @@ dataset_list:
         cache: ${data.cache}
         preprocessing: ${data.preprocessing}
         features: ${data.features}
+        graph: ${data.graph}
       data_path: ${paths.data_root}/xela/pretraining/extracted
       baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
       xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf

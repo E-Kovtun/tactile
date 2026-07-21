@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - /jepa_pretrain: 2c_4t
   - override /paths: default
   - override /tensorboard: tensorboard_config
   - override /data: xela_object
@@ -10,8 +11,7 @@ sensor: xela
 ssl_name: jepa
 ckpt_path: ~
 resume_id: ~
+run_name: ${jepa_pretrain.run_name}
 
 task:
-  # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_transformer_encoder_jepa/2026.06.26_18-43/checkpoints/epoch-0500.ckpt
-  # checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_transformer_encoder_jepa/2026.06.29_19-54/checkpoints/epoch-0500.ckpt
-  checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_transformer_encoder_jepa/2026.06.30_18-18/checkpoints/epoch-0400.ckpt
+  checkpoint_encoder: ${jepa_pretrain.checkpoint_encoder}
