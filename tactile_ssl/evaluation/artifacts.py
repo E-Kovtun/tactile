@@ -15,6 +15,11 @@ import numpy as np
 
 ARTIFACT_SCHEMA_VERSION = 1
 METRIC_VERSION = "downstream-test-v1"
+GROUPING_VERSION_BY_TASK = {
+    "force": "force-contact-episodes-v1",
+    "pose": "pose-recordings-v1",
+    "object_classification": "object-recordings-v1",
+}
 
 
 def _find_key(value: Any, key: str) -> Any:
@@ -143,6 +148,7 @@ def save_evaluation_artifact(
         "schema_version": ARTIFACT_SCHEMA_VERSION,
         "metric_version": METRIC_VERSION,
         "task": task,
+        "grouping_version": GROUPING_VERSION_BY_TASK.get(task),
         "seed": seed,
         "checkpoint": checkpoint,
         "use_spatial_coords": use_spatial_coords,

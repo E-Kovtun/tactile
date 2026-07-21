@@ -33,6 +33,19 @@ from torchvision import transforms
 logger = get_pylogger(__name__)
 
 
+def _contact_episode_starts(in_contact: np.ndarray) -> np.ndarray:
+    """Return each contact frame's contiguous-run start, or -1 off contact."""
+    in_contact = np.asarray(in_contact, dtype=bool).reshape(-1)
+    starts = np.full(len(in_contact), -1, dtype=np.int64)
+    current_start = -1
+    for i, contact in enumerate(in_contact):
+        if contact and (i == 0 or not in_contact[i - 1]):
+            current_start = i
+        if contact:
+            starts[i] = current_start
+    return starts
+
+
 def _ensure_force_cache_config(config: DictConfig) -> None:
     if config.get("cache") is None:
         config.cache = {}
@@ -392,11 +405,18 @@ class ForceDataset(data.Dataset):
         )
 
         self.idx_to_episode_idx = self.get_idx_to_episode_idx(force_data)
-        group_ids = [stable_int64_id("force-recording", Path(path)) for path in self.datapath_list]
+        recording_ids = [stable_int64_id("force-recording", Path(path)) for path in self.datapath_list]
         for item in self.idx_to_episode_idx:
-            group_id = group_ids[item["episode_index"]]
-            item["group_id"] = group_id
-            item["sample_id"] = stable_int64_id("force-window", group_id, item["target_offset"])
+            recording_id = recording_ids[item["episode_index"]]
+            item["group_id"] = stable_int64_id(
+                "force-contact-episode-v1",
+                recording_id,
+                item["contact_episode_start"],
+            )
+            # Keep sample IDs tied to the recording and window, not to the
+            # statistical grouping scheme. This makes predictions alignable
+            # across grouping-version changes.
+            item["sample_id"] = stable_int64_id("force-window", recording_id, item["target_offset"])
         self.window_sensor_graphs = self.load_window_sensor_graphs()
 
         if self.target_normalize:
@@ -492,6 +512,8 @@ class ForceDataset(data.Dataset):
             in_contact[target_data[:, -1] > np.float64(self.normal_force_contact_threshold)] = True
             in_contact = savgol_filter(in_contact, 5, 3) > 0.5
 
+            contact_episode_start = _contact_episode_starts(in_contact)
+
             idx_to_episode_idx.extend(
                 [
                     {
@@ -500,6 +522,7 @@ class ForceDataset(data.Dataset):
                         "input_offset": int(i * self.nominal_freq // self.force_nominal_freq),
                         "target_offset": i,
                         "episode_index": episode_index,
+                        "contact_episode_start": int(contact_episode_start[i]),
                     }
                     for i in range(self.target_frames_per_window, len(target_data))
                     if in_contact[i]
