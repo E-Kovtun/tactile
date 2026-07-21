@@ -19,6 +19,17 @@ run_name: physical_dijkstra
 
 data:
   dataset_target: tactile_ssl.data.xela_tactile.XelaGraphSSLDataset
+  graph_mask_collator:
+    _target_: tactile_ssl.utils.jepa_masking.JEPAGraphMaskCollator
+    context_mask_scale: ${algorithm.context_mask_scale}
+    target_mask_scale: ${algorithm.target_mask_scale}
+    num_context_masks: ${algorithm.num_context_masks}
+    num_target_masks: ${algorithm.num_target_masks}
+    masking: ${algorithm.masking}
+  train_dataloader:
+    collate_fn: ${data.graph_mask_collator}
+  val_dataloader:
+    collate_fn: ${data.graph_mask_collator}
   graph:
     enabled: true
     type: physical

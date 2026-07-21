@@ -387,7 +387,15 @@ class XelaJEPAModule(Module, nn.Module):
         self.step = self.step + 1
         self.generator.manual_seed(self.step)
         x = batch["sensor"]
-        context_masks, target_masks = self.sample_jepa_masks(x, graph_info=batch.get("graph"))
+        context_masks = batch.get("context_masks")
+        target_masks = batch.get("target_masks")
+        if (context_masks is None) != (target_masks is None):
+            raise ValueError("A batch must contain both context_masks and target_masks, or neither")
+        if context_masks is None:
+            context_masks, target_masks = self.sample_jepa_masks(
+                x,
+                graph_info=batch.get("graph"),
+            )
 
         ssl_loss = self.forward(x, context_masks, target_masks)
 

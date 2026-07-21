@@ -3,9 +3,12 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Literal, Optional
 
+import numpy as np
 import torch
+from torch.utils.data import default_collate, get_worker_info
 
 from tactile_ssl.graph.types import WeightedSensorGraph
+from tactile_ssl.utils.masking import sample_block_size_1d
 
 
 GrowthStrategy = Literal["dijkstra", "bfs"]
@@ -32,28 +35,50 @@ def _build_undirected_adjacency(
             "edge_weight must contain one value per edge; "
             f"got {edge_weight.numel()} weights for {edge_index.shape[1]} edges"
         )
-    if edge_index.numel() and (int(edge_index.min()) < 0 or int(edge_index.max()) >= num_nodes):
+    if edge_index.shape[1] == 0:
+        return [[] for _ in range(num_nodes)]
+
+    edges = edge_index.numpy()
+    weights = edge_weight.numpy()
+    if edges.min() < 0 or edges.max() >= num_nodes:
         raise ValueError(f"edge_index values must be within 0..{num_nodes - 1}")
-    if edge_weight.numel() and not torch.all(torch.isfinite(edge_weight) & (edge_weight > 0)):
+    if not np.all(np.isfinite(weights) & (weights > 0)):
         raise ValueError("All graph edge weights must be finite and positive")
 
-    neighbors: list[dict[int, float]] = [dict() for _ in range(num_nodes)]
-    for edge_id in range(edge_index.shape[1]):
-        left = int(edge_index[0, edge_id])
-        right = int(edge_index[1, edge_id])
-        if left == right:
-            continue
-        weight = float(edge_weight[edge_id])
-        previous = neighbors[left].get(right)
-        if previous is None or weight < previous:
-            neighbors[left][right] = weight
-            neighbors[right][left] = weight
-    return [sorted(node_neighbors.items()) for node_neighbors in neighbors]
+    left = np.minimum(edges[0], edges[1])
+    right = np.maximum(edges[0], edges[1])
+    non_self = left != right
+    left, right, weights = left[non_self], right[non_self], weights[non_self]
+    if left.size == 0:
+        return [[] for _ in range(num_nodes)]
+
+    # Sort canonical undirected pairs by (left, right, weight). The first item
+    # of every pair is therefore its minimum weight, so deduplication remains
+    # deterministic without per-edge Torch scalar conversions or dictionaries.
+    order = np.lexsort((weights, right, left))
+    left, right, weights = left[order], right[order], weights[order]
+    unique = np.ones(left.shape[0], dtype=bool)
+    unique[1:] = (left[1:] != left[:-1]) | (right[1:] != right[:-1])
+    left, right, weights = left[unique], right[unique], weights[unique]
+
+    adjacency: list[list[tuple[int, float]]] = [[] for _ in range(num_nodes)]
+    for left_node, right_node, weight in zip(
+        left.tolist(),
+        right.tolist(),
+        weights.tolist(),
+    ):
+        adjacency[left_node].append((right_node, weight))
+        adjacency[right_node].append((left_node, weight))
+    for neighbors in adjacency:
+        neighbors.sort(key=lambda item: item[0])
+    return adjacency
 
 
-def _eligible_seed_nodes(adjacency: Sequence[Sequence[tuple[int, float]]], size: int) -> list[int]:
+def _connected_components(
+    adjacency: Sequence[Sequence[tuple[int, float]]],
+) -> list[list[int]]:
     seen = [False] * len(adjacency)
-    eligible: list[int] = []
+    components: list[list[int]] = []
     for start in range(len(adjacency)):
         if seen[start]:
             continue
@@ -67,9 +92,17 @@ def _eligible_seed_nodes(adjacency: Sequence[Sequence[tuple[int, float]]], size:
                 if not seen[neighbor]:
                     seen[neighbor] = True
                     stack.append(neighbor)
-        if len(component) >= size:
-            eligible.extend(component)
-    return eligible
+        components.append(component)
+    return components
+
+
+def _eligible_seed_nodes(
+    adjacency: Sequence[Sequence[tuple[int, float]]],
+    size: int,
+    components: Optional[Sequence[Sequence[int]]] = None,
+) -> list[int]:
+    components = components if components is not None else _connected_components(adjacency)
+    return [node for component in components if len(component) >= size for node in component]
 
 
 def _sample_seed(eligible: Sequence[int], generator: Optional[torch.Generator]) -> int:
@@ -336,10 +369,19 @@ def sample_multiblock_graph_masks(
         )
         eligible_by_size = {}
         if adjacency is not None:
+            components = _connected_components(adjacency)
             if context_strategy == "connected_region":
-                eligible_by_size[context_size] = _eligible_seed_nodes(adjacency, context_size)
+                eligible_by_size[context_size] = _eligible_seed_nodes(
+                    adjacency,
+                    context_size,
+                    components,
+                )
             if target_strategy == "connected_region":
-                eligible_by_size[target_size] = _eligible_seed_nodes(adjacency, target_size)
+                eligible_by_size[target_size] = _eligible_seed_nodes(
+                    adjacency,
+                    target_size,
+                    components,
+                )
 
         accepted_contexts: Optional[list[torch.Tensor]] = None
         accepted_targets: Optional[list[torch.Tensor]] = None
@@ -424,3 +466,95 @@ def sample_multiblock_graph_masks(
         ]
     )
     return context_masks.to(device), target_masks.to(device)
+
+
+class JEPAGraphMaskCollator:
+    """Build graph masks in DataLoader workers before Fabric moves a batch to GPU."""
+
+    def __init__(
+        self,
+        context_mask_scale: Sequence[float],
+        target_mask_scale: Sequence[float],
+        num_context_masks: int,
+        num_target_masks: int,
+        masking: Mapping,
+    ) -> None:
+        self.context_mask_scale = tuple(float(value) for value in context_mask_scale)
+        self.target_mask_scale = tuple(float(value) for value in target_mask_scale)
+        if len(self.context_mask_scale) != 2 or len(self.target_mask_scale) != 2:
+            raise ValueError("JEPA mask scales must each contain exactly two values")
+        self.num_context_masks = int(num_context_masks)
+        self.num_target_masks = int(num_target_masks)
+        self.masking = masking
+        if str(masking.get("mode", "legacy")) != "multiblock_graph":
+            raise ValueError("JEPAGraphMaskCollator requires masking.mode=multiblock_graph")
+        self._generator: Optional[torch.Generator] = None
+        self._generator_seed: Optional[int] = None
+
+    def _worker_generator(self) -> torch.Generator:
+        worker_info = get_worker_info()
+        seed = int(worker_info.seed if worker_info is not None else torch.initial_seed())
+        if self._generator is None or self._generator_seed != seed:
+            self._generator = torch.Generator().manual_seed(seed)
+            self._generator_seed = seed
+        return self._generator
+
+    def __call__(self, samples: Sequence[Mapping]) -> dict:
+        batch = default_collate(samples)
+        graph_info = batch.pop("graph", None)
+        if graph_info is None:
+            raise ValueError("JEPAGraphMaskCollator requires every sample to contain a graph")
+        if "sensor" not in batch:
+            raise ValueError("JEPAGraphMaskCollator requires every sample to contain sensor data")
+
+        sensor = batch["sensor"]
+        batch_size, _, num_nodes, _ = sensor.shape
+        generator = self._worker_generator()
+        context_size = sample_block_size_1d(
+            num_nodes,
+            self.context_mask_scale,
+            generator=generator,
+        )[0]
+        target_size = sample_block_size_1d(
+            num_nodes,
+            self.target_mask_scale,
+            generator=generator,
+        )[0]
+
+        context_cfg = self.masking.get("context", {})
+        target_cfg = self.masking.get("target", {})
+        overlap_cfg = self.masking.get("overlap", {})
+        expected_overlap = {
+            "target_target": "allow",
+            "context_target": "subtract_from_context",
+            "context_context": "allow",
+        }
+        actual_overlap = {
+            key: str(overlap_cfg.get(key, value)) for key, value in expected_overlap.items()
+        }
+        if actual_overlap != expected_overlap:
+            raise ValueError(
+                "JEPAGraphMaskCollator supports only I-JEPA overlap semantics: "
+                f"{expected_overlap}; got {actual_overlap}"
+            )
+
+        context_masks, target_masks = sample_multiblock_graph_masks(
+            graph_info=graph_info,
+            batch_size=batch_size,
+            num_nodes=num_nodes,
+            context_size=context_size,
+            target_size=target_size,
+            num_context_masks=self.num_context_masks,
+            num_target_masks=self.num_target_masks,
+            context_strategy=str(context_cfg.get("strategy", "connected_region")),
+            target_strategy=str(target_cfg.get("strategy", "connected_region")),
+            context_growth=str(context_cfg.get("growth", "dijkstra")),
+            target_growth=str(target_cfg.get("growth", "dijkstra")),
+            min_context_keep_tokens=int(self.masking.get("min_context_keep_tokens", 32)),
+            min_context_keep_ratio=float(self.masking.get("min_context_keep_ratio", 0.15)),
+            max_resample_attempts=int(self.masking.get("max_resample_attempts", 32)),
+            generator=generator,
+        )
+        batch["context_masks"] = context_masks
+        batch["target_masks"] = target_masks
+        return batch

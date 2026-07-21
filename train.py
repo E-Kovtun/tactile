@@ -248,8 +248,15 @@ def get_dataloaders(cfg: DictConfig):
     else:
         raise NotImplementedError(f"Sensor type {cfg.data.sensor} is not supported.")
 
-    train_dataloader = data.DataLoader(train_dset, **cfg.data.train_dataloader)
-    val_dataloader = data.DataLoader(val_dset, **cfg.data.val_dataloader)
+    def build_dataloader(dataset, loader_cfg):
+        loader_kwargs = dict(loader_cfg)
+        collate_cfg = loader_kwargs.get("collate_fn")
+        if isinstance(collate_cfg, (DictConfig, dict)):
+            loader_kwargs["collate_fn"] = hydra.utils.instantiate(collate_cfg)
+        return data.DataLoader(dataset, **loader_kwargs)
+
+    train_dataloader = build_dataloader(train_dset, cfg.data.train_dataloader)
+    val_dataloader = build_dataloader(val_dset, cfg.data.val_dataloader)
 
     return train_dataloader, val_dataloader
 
