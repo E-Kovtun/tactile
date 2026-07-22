@@ -1,0 +1,58 @@
+defaults:
+  - default
+  - _self_
+
+experiment_root: /workspace-SR004.nfs2/konovalov/tactile/experiments
+output_dir: ${experiment_root}/significance/graph_jepa_1c2t_c50-80_t10-22
+
+tasks:
+  force:
+    comparison_blocks:
+      - id: graph_jepa_large_masks
+        name: Graph JEPA Dijkstra (1c, 2t; context 50-80%, target 10-22%)
+        baseline:
+          id: original_dino
+          name: Original DINO
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_dinov2/Original_*
+          select: latest
+        experiments:
+          - id: graph_jepa_1c2t_c50_80_t10_22
+            name: Graph JEPA Dijkstra (1c, 2t; c50-80%, t10-22%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_1c2t_c50-80_t10-22_*
+            select: latest
+
+  pose:
+    comparison_blocks:
+      - id: graph_jepa_large_masks
+        name: Graph JEPA Dijkstra (1c, 2t; context 50-80%, target 10-22%)
+        baseline:
+          id: original_dino
+          name: Original DINO
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_dinov2/Original_*
+          select: latest
+        experiments:
+          - id: graph_jepa_1c2t_c50_80_t10_22
+            name: Graph JEPA Dijkstra (1c, 2t; c50-80%, t10-22%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_1c2t_c50-80_t10-22_*
+            select: latest
+
+  object_classification:
+    comparison_blocks:
+      - id: graph_jepa_large_masks
+        name: Graph JEPA Dijkstra (1c, 2t; context 50-80%, target 10-22%)
+        baseline:
+          id: original_dino
+          name: Original DINO
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_object_classification_dinov2/Original_*
+          select: latest
+        experiments:
+          - id: graph_jepa_1c2t_c50_80_t10_22
+            name: Graph JEPA Dijkstra (1c, 2t; c50-80%, t10-22%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_1c2t_c50-80_t10-22_*
+            select: latest

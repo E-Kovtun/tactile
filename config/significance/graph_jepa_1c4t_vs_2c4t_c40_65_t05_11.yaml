@@ -1,0 +1,58 @@
+defaults:
+  - default
+  - _self_
+
+experiment_root: /workspace-SR004.nfs2/konovalov/tactile/experiments
+output_dir: ${experiment_root}/significance/graph_jepa_1c4t_vs_2c4t_c40-65_t05-11
+
+tasks:
+  force:
+    comparison_blocks:
+      - id: graph_jepa_context_count
+        name: Graph JEPA physical Dijkstra — context count
+        baseline:
+          id: graph_jepa_2c4t_c40_65_t05_11
+          name: Graph JEPA Dijkstra (2c, 4t; c40-65%, t5-11%)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_2c4t_c40-65_t05-11_*
+          select: latest
+        experiments:
+          - id: graph_jepa_1c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (1c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_1c4t_c40-65_t05-11_*
+            select: latest
+
+  pose:
+    comparison_blocks:
+      - id: graph_jepa_context_count
+        name: Graph JEPA physical Dijkstra — context count
+        baseline:
+          id: graph_jepa_2c4t_c40_65_t05_11
+          name: Graph JEPA Dijkstra (2c, 4t; c40-65%, t5-11%)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_2c4t_c40-65_t05-11_*
+          select: latest
+        experiments:
+          - id: graph_jepa_1c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (1c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_1c4t_c40-65_t05-11_*
+            select: latest
+
+  object_classification:
+    comparison_blocks:
+      - id: graph_jepa_context_count
+        name: Graph JEPA physical Dijkstra — context count
+        baseline:
+          id: graph_jepa_2c4t_c40_65_t05_11
+          name: Graph JEPA Dijkstra (2c, 4t; c40-65%, t5-11%)
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_2c4t_c40-65_t05-11_*
+          select: latest
+        experiments:
+          - id: graph_jepa_1c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (1c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_1c4t_c40-65_t05-11_*
+            select: latest

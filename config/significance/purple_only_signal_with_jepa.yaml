@@ -4,7 +4,6 @@ defaults:
 
 # Override either root when the runs are mounted elsewhere.
 experiment_root: ${oc.env:TACTILE_EXPERIMENT_ROOT,/workspace-SR004.nfs2/konovalov/tactile/experiments}
-jepa_experiment_root: ${oc.env:JEPA_EXPERIMENT_ROOT,/workspace-SR004.nfs2/kovtun/tactile/experiments}
 output_dir: ${experiment_root}/significance/purple_only_signal_with_jepa
 
 tasks:
@@ -48,28 +47,69 @@ tasks:
           id: jepa_transformer_old
           name: JEPA transformer (old)
           report_variant: only_signal
-          directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.06.29_09-25_2026.06.29_09-25
+          directory: ${experiment_root}/downstream_force_jepa/jepa_transformer_old_*
+          select: latest
         experiments:
           - id: jepa_1c_4t
             name: JEPA transformer (1, 4)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.06.30_10-44_2026.06.30_10-44
+            directory: ${experiment_root}/downstream_force_jepa/jepa_1c_4t_*
+            select: latest
           - id: jepa_2c_4t
-            name: JEPA (2, 4)
+            name: JEPA (2, 4) — epoch 500
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.01_08-24_2026.07.01_08-24
+            directory: ${experiment_root}/downstream_force_jepa/jepa_2c_4t_epoch500_*
+            select: latest
+          - id: graph_jepa_2c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (2c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_2c4t_c40-65_t05-11_*
+            select: latest
+          - id: graph_jepa_1c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (1c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_1c4t_c40-65_t05-11_*
+            select: latest
+          - id: graph_jepa_1c2t_c50_80_t10_22
+            name: Graph JEPA Dijkstra (1c, 2t; c50-80%, t10-22%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_1c2t_c50-80_t10-22_*
+            select: latest
+          - id: graph_jepa_1c4t_c50_90_t10_18
+            name: Graph JEPA Dijkstra (1c, 4t; c50-90%, t10-18%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/graph_physical_dijkstra_1c4t_c50-90_t10-18_*
+            select: latest
           - id: jepa_contiguous_1c_2t
             name: JEPA contiguous (1, 2)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.02_10-18_2026.07.02_10-18
+            directory: ${experiment_root}/downstream_force_jepa/jepa_contiguous_1c_2t_*
+            select: latest
           - id: jepa_mix_2c_4t
             name: JEPA (2, 4) — mix random/contiguous
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.03_09-41_2026.07.03_09-41
+            directory: ${experiment_root}/downstream_force_jepa/jepa_mix_2c_4t_*
+            select: latest
           - id: jepa_random_1c_2t
             name: JEPA random (1, 2)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_force_jepa/transformer_2026.07.13_10-16_2026.07.13_10-16
+            directory: ${experiment_root}/downstream_force_jepa/jepa_random_1c_2t_*
+            select: latest
+          - id: jepa_context_contiguous_target_contiguous_new
+            name: JEPA context contiguous → target contiguous (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/jepa_context_contiguous_target_contiguous_new_*
+            select: latest
+          - id: jepa_context_contiguous_target_random_new
+            name: JEPA context contiguous → target random (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/jepa_context_contiguous_target_random_new_*
+            select: latest
+          - id: jepa_context_random_target_contiguous_new
+            name: JEPA context random → target contiguous (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_jepa/jepa_context_random_target_contiguous_new_*
+            select: latest
 
   pose:
     comparison_blocks:
@@ -111,28 +151,69 @@ tasks:
           id: jepa_transformer_old
           name: JEPA transformer (old)
           report_variant: only_signal
-          directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.06.29_09-37
+          directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_transformer_old_*
+          select: latest
         experiments:
           - id: jepa_1c_4t
             name: JEPA transformer (1, 4)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.06.30_10-51
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_1c_4t_*
+            select: latest
           - id: jepa_2c_4t
-            name: JEPA (2, 4)
+            name: JEPA (2, 4) — epoch 500
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.01_08-26
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_2c_4t_epoch500_*
+            select: latest
+          - id: graph_jepa_2c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (2c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_2c4t_c40-65_t05-11_*
+            select: latest
+          - id: graph_jepa_1c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (1c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_1c4t_c40-65_t05-11_*
+            select: latest
+          - id: graph_jepa_1c2t_c50_80_t10_22
+            name: Graph JEPA Dijkstra (1c, 2t; c50-80%, t10-22%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_1c2t_c50-80_t10-22_*
+            select: latest
+          - id: graph_jepa_1c4t_c50_90_t10_18
+            name: Graph JEPA Dijkstra (1c, 4t; c50-90%, t10-18%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/graph_physical_dijkstra_1c4t_c50-90_t10-18_*
+            select: latest
           - id: jepa_contiguous_1c_2t
             name: JEPA contiguous (1, 2)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.02_10-19
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_contiguous_1c_2t_*
+            select: latest
           - id: jepa_mix_2c_4t
             name: JEPA (2, 4) — mix random/contiguous
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.03_09-42
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_mix_2c_4t_*
+            select: latest
           - id: jepa_random_1c_2t
             name: JEPA random (1, 2)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_pose_estimation_comparison_jepa/2026.07.13_10-16
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_random_1c_2t_*
+            select: latest
+          - id: jepa_context_contiguous_target_contiguous_new
+            name: JEPA context contiguous → target contiguous (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_context_contiguous_target_contiguous_new_*
+            select: latest
+          - id: jepa_context_contiguous_target_random_new
+            name: JEPA context contiguous → target random (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_context_contiguous_target_random_new_*
+            select: latest
+          - id: jepa_context_random_target_contiguous_new
+            name: JEPA context random → target contiguous (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_estimation_comparison_jepa/jepa_context_random_target_contiguous_new_*
+            select: latest
 
   object_classification:
     comparison_blocks:
@@ -171,25 +252,66 @@ tasks:
           id: jepa_transformer_old
           name: JEPA transformer (old)
           report_variant: only_signal
-          directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.06.29_09-14_2026.06.29_09-14
+          directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_transformer_old_*
+          select: latest
         experiments:
           - id: jepa_1c_4t
             name: JEPA transformer (1, 4)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.06.30_10-46_2026.06.30_10-46
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_1c_4t_*
+            select: latest
           - id: jepa_2c_4t
-            name: JEPA (2, 4)
+            name: JEPA (2, 4) — epoch 500
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.01_08-25_2026.07.01_08-25
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_2c_4t_epoch500_*
+            select: latest
+          - id: graph_jepa_2c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (2c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_2c4t_c40-65_t05-11_*
+            select: latest
+          - id: graph_jepa_1c4t_c40_65_t05_11
+            name: Graph JEPA Dijkstra (1c, 4t; c40-65%, t5-11%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_1c4t_c40-65_t05-11_*
+            select: latest
+          - id: graph_jepa_1c2t_c50_80_t10_22
+            name: Graph JEPA Dijkstra (1c, 2t; c50-80%, t10-22%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_1c2t_c50-80_t10-22_*
+            select: latest
+          - id: graph_jepa_1c4t_c50_90_t10_18
+            name: Graph JEPA Dijkstra (1c, 4t; c50-90%, t10-18%)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/graph_physical_dijkstra_1c4t_c50-90_t10-18_*
+            select: latest
           - id: jepa_contiguous_1c_2t
             name: JEPA contiguous (1, 2)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.02_10-20_2026.07.02_10-20
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_contiguous_1c_2t_*
+            select: latest
           - id: jepa_mix_2c_4t
             name: JEPA (2, 4) — mix random/contiguous
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.03_09-42_2026.07.03_09-42
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_mix_2c_4t_*
+            select: latest
           - id: jepa_random_1c_2t
             name: JEPA random (1, 2)
             report_variant: only_signal
-            directory: ${jepa_experiment_root}/downstream_object_classification_comparison_jepa/jepa_2026.07.13_10-16_2026.07.13_10-16
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_random_1c_2t_*
+            select: latest
+          - id: jepa_context_contiguous_target_contiguous_new
+            name: JEPA context contiguous → target contiguous (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_context_contiguous_target_contiguous_new_*
+            select: latest
+          - id: jepa_context_contiguous_target_random_new
+            name: JEPA context contiguous → target random (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_context_contiguous_target_random_new_*
+            select: latest
+          - id: jepa_context_random_target_contiguous_new
+            name: JEPA context random → target contiguous (new)
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_object_classification_comparison_jepa/jepa_context_random_target_contiguous_new_*
+            select: latest
