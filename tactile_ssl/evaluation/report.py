@@ -224,6 +224,85 @@ def _write_task_sheet(sheet, task: str, rows: Sequence[Mapping[str, Any]]) -> No
             sheet.cell(row_index, 1).alignment = Alignment(vertical="center", wrap_text=True)
 
 
+def _write_means_task_sheet(sheet, task: str, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Write the legacy presentation layout with one mean-only row per method."""
+    title, layout = TASK_LAYOUTS[task]
+    sheet.cell(1, 1, title)
+    sheet.cell(2, 1, "method name")
+    metric_columns: Dict[Tuple[str, str], int] = {}
+    column = 2
+    for metric, variants in layout:
+        start = column
+        for variant in variants:
+            sheet.cell(2, column, variant)
+            metric_columns[(metric, variant)] = column
+            column += 1
+        end = column - 1
+        sheet.cell(1, start, metric)
+        if end > start:
+            sheet.merge_cells(start_row=1, start_column=start, end_row=1, end_column=end)
+
+    by_block: Dict[str, List[Mapping[str, Any]]] = {}
+    block_order: List[str] = []
+    for row in rows:
+        block_id = str(row.get("comparison_block_id", "default"))
+        if block_id not in by_block:
+            block_order.append(block_id)
+            by_block[block_id] = []
+        by_block[block_id].append(row)
+
+    output_row = 3
+    block_header_rows: List[int] = []
+    baseline_rows: List[int] = []
+    method_rows: List[int] = []
+    for block_id in block_order:
+        block_rows = by_block[block_id]
+        block_name = str(block_rows[0].get("comparison_block_name", ""))
+        if block_name:
+            sheet.cell(output_row, 1, block_name)
+            sheet.merge_cells(
+                start_row=output_row,
+                start_column=1,
+                end_row=output_row,
+                end_column=column - 1,
+            )
+            block_header_rows.append(output_row)
+            output_row += 1
+
+        by_experiment: Dict[str, List[Mapping[str, Any]]] = {}
+        experiment_order: List[str] = []
+        for row in block_rows:
+            experiment_id = str(row["experiment_id"])
+            if experiment_id not in by_experiment:
+                experiment_order.append(experiment_id)
+                by_experiment[experiment_id] = []
+            by_experiment[experiment_id].append(row)
+
+        for experiment_id in experiment_order:
+            experiment_rows = by_experiment[experiment_id]
+            is_baseline = bool(experiment_rows[0]["is_baseline"])
+            sheet.cell(output_row, 1, str(experiment_rows[0]["method"]))
+            for row in experiment_rows:
+                target_column = metric_columns[(str(row["metric"]), str(row["variant"]))]
+                cell = sheet.cell(output_row, target_column, float(row["estimate"]))
+                cell.number_format = "0.0000"
+            (baseline_rows if is_baseline else method_rows).append(output_row)
+            output_row += 1
+
+    _style_presentation_sheet(sheet, column - 1)
+    for row_indices, color, bold in (
+        (block_header_rows, "FFDED4ED", True),
+        (baseline_rows, "FFD9EAF7", True),
+        (method_rows, "FFE2F0D9", False),
+    ):
+        for row_index in row_indices:
+            for cell in sheet[row_index][: column - 1]:
+                cell.fill = PatternFill("solid", fgColor=color)
+                if bold:
+                    cell.font = Font(bold=True)
+            sheet.cell(row_index, 1).alignment = Alignment(vertical="center", wrap_text=True)
+
+
 def _write_flat_sheet(sheet, rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> None:
     sheet.append(list(fields))
     for row in rows:
@@ -280,6 +359,19 @@ def write_xlsx(
     workbook.save(path)
 
 
+def write_means_xlsx(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Write mean estimates in the legacy task-table layout."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for task in TASK_LAYOUTS:
+        task_rows = [row for row in rows if row["task"] == task]
+        if task_rows:
+            title = TASK_LAYOUTS[task][0]
+            _write_means_task_sheet(workbook.create_sheet(title), task, task_rows)
+    workbook.save(path)
+
+
 def write_reports(
     output_dir: Path,
     rows: Sequence[Mapping[str, Any]],
@@ -288,6 +380,8 @@ def write_reports(
     output_dir = Path(output_dir)
     csv_path = output_dir / "significance_results.csv"
     xlsx_path = output_dir / "significance_report.xlsx"
+    means_xlsx_path = output_dir / "downstream_means.xlsx"
     write_csv(csv_path, rows)
     write_xlsx(xlsx_path, rows, experiments)
+    write_means_xlsx(means_xlsx_path, rows)
     return xlsx_path, csv_path

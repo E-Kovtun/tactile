@@ -301,6 +301,7 @@ def run_analysis(cfg: DictConfig) -> tuple:
 def main(cfg: DictConfig) -> None:
     xlsx_path, csv_path = run_analysis(cfg)
     print(f"XLSX report: {xlsx_path}")
+    print(f"Means-only XLSX report: {xlsx_path.parent / 'downstream_means.xlsx'}")
     print(f"CSV report: {csv_path}")
 
 
