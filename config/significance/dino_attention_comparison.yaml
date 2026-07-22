@@ -1,0 +1,64 @@
+defaults:
+  - default
+  - _self_
+
+experiment_root: /workspace-SR004.nfs2/konovalov/tactile/experiments
+output_dir: ${experiment_root}/significance/dino_attention_comparison
+
+tasks:
+  force:
+    comparison_blocks:
+      - id: attention_variants
+        name: DINO downstream attention variants
+        baseline:
+          id: attention_baseline
+          name: Attention baseline
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_force_dinov2_nopos/attention_baseline_l1_h12_*
+          select: latest
+        experiments:
+          - id: original_dino
+            name: Original DINO
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2/Original_*
+            select: latest
+          - id: distance_attention
+            name: Distance attention bias
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2_nopos/spatial_distance_attention_l1_h12_*
+            select: latest
+          - id: directional_attention
+            name: Directional attention bias
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_force_dinov2_nopos/spatial_directional_attention_l1_h12_*
+            select: latest
+
+  pose:
+    comparison_blocks:
+      - id: attention_variants
+        name: DINO downstream attention variants
+        baseline:
+          id: attention_baseline
+          name: Attention baseline
+          report_variant: only_signal
+          directory: ${experiment_root}/downstream_pose_dinov2_nopos/attention_baseline_l1_h6_*
+          select: latest
+        experiments:
+          - id: original_dino
+            name: Original DINO
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2/Original_*
+            select: latest
+          - id: distance_attention
+            name: Distance attention bias
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2_nopos/spatial_distance_attention_l1_h6_*
+            select: latest
+          - id: directional_attention
+            name: Directional attention bias
+            report_variant: only_signal
+            directory: ${experiment_root}/downstream_pose_dinov2_nopos/spatial_directional_attention_l1_h6_*
+            select: latest
+
+  object_classification:
+    comparison_blocks: []
