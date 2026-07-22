@@ -1,0 +1,3 @@
+display_name: JEPA context contiguous → target contiguous (new)
+run_name: jepa_context_contiguous_target_contiguous_new
+checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/context_contiguous_target_contiguous_2026.07.07_17-10/checkpoints/epoch-0500.ckpt

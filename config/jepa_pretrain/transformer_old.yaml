@@ -1,0 +1,3 @@
+display_name: JEPA transformer (old)
+run_name: jepa_transformer_old
+checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/2026.06.26_18-43/checkpoints/epoch-0500.ckpt

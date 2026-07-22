@@ -1,0 +1,3 @@
+display_name: Graph JEPA physical Dijkstra (2 context, 4 target)
+run_name: graph_physical_dijkstra_2c_4t
+checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/pretrain_transformer_encoder_jepa_graph/physical_dijkstra_2026.07.21_18-19/checkpoints/epoch-0500.ckpt

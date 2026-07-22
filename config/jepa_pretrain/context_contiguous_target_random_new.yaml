@@ -1,0 +1,3 @@
+display_name: JEPA context contiguous → target random (new)
+run_name: jepa_context_contiguous_target_random_new
+checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/context_contiguous_target_random_2026.07.06_15-14/checkpoints/epoch-0500.ckpt
