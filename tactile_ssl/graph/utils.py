@@ -59,6 +59,14 @@ LINK_TO_HAND_PART: Dict[str, str] = {
     "ahr_palm_3_4x6_palm_link": "palm",
 }
 
+HAND_PART_ORDER = (
+    "thumb",
+    "index_finger",
+    "middle_finger",
+    "ring_finger",
+    "palm",
+)
+
 HAND_PART_LABELS_RU: Dict[str, str] = {
     "thumb": "большой палец",
     "index_finger": "указательный палец",

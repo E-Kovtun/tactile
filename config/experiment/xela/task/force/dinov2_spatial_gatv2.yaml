@@ -18,6 +18,7 @@ spatial_hidden_dims: [32, 64]
 spatial_gat_heads: 4
 spatial_gat_dropout: 0.0
 spatial_bridge_k: 4
+experiment_name: downstream_pose_dinov2
 run_name: spatial_gatv2_layers_${join:_,${spatial_hidden_dims}}
 
 data:

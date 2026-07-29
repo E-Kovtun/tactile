@@ -216,6 +216,7 @@ class XelaJEPAModule(Module, nn.Module):
                 target_strategy=str(target_cfg.get("strategy", "connected_region")),
                 context_growth=str(context_cfg.get("growth", "dijkstra")),
                 target_growth=str(target_cfg.get("growth", "dijkstra")),
+                target_groups=target_cfg.get("groups"),
                 min_context_keep_tokens=int(self.masking.get("min_context_keep_tokens", 32)),
                 min_context_keep_ratio=float(self.masking.get("min_context_keep_ratio", 0.15)),
                 max_resample_attempts=int(self.masking.get("max_resample_attempts", 32)),
@@ -325,14 +326,19 @@ class XelaJEPAModule(Module, nn.Module):
 
         return context_masks, target_masks
 
-    def forward(self, xs: torch.Tensor, context_masks: torch.Tensor, target_masks: torch.Tensor):
+    def forward(
+        self,
+        xs: torch.Tensor,
+        context_masks: torch.Tensor,
+        target_masks: Union[torch.Tensor, List[torch.Tensor]],
+    ):
         assert context_masks is not None and target_masks is not None, "Masks are required for JEPAModule during training"
 
         # len(context_masks) = k, len(target_masks) = p
         # context_masks k x b x n1
-        # target_masks p x b x n2
+        # target_masks p x b x n2, or a list of b x n_i tensors for
+        # group-specific target scales.
         k = context_masks.shape[0]
-        p = target_masks.shape[0]
         b = context_masks.shape[1]
         context_out = self.context_encoder.forward_features(xs, masks=context_masks, mask_type='tubelet')        # do we need the same or separate pos_embed compared to jepa decoder
         context_patch_tokens = context_out["x_norm_patchtokens"] # (b k) x (t n1) x c
@@ -341,18 +347,6 @@ class XelaJEPAModule(Module, nn.Module):
             context_patch_tokens,
             "b (t n) c -> b t n c",
             n=context_masks.shape[-1],
-        )
-
-        predictor_out = self.predictor(context_patch_tokens, context_masks=context_masks, masks=target_masks, 
-            context_pos_embed=self.target_encoder.pos_embed) # list(p x (k b) x t x n2 x c)
-        predictor_out = torch.cat(predictor_out, dim=0)
-        predictor_out = einops.rearrange(
-            predictor_out,
-            "(p k b) t n c -> k p b t n c",
-            k=k,
-            p=p,
-            b=b,
-            n=target_masks.shape[-1],
         )
 
         with torch.no_grad():
@@ -365,23 +359,63 @@ class XelaJEPAModule(Module, nn.Module):
             n=xs.shape[-2],
         )
 
-        target_masked = self.target_encoder.apply_tubelet_masks(target_patch_tokens, masks=target_masks) # (b p) x t x n2 x c
-        target_masked = einops.rearrange(
-            target_masked,
-            "(p b) t n c -> p b t n c",
-            b=b, 
-            p=p,
-        )
+        def predict_mask_group(mask_group: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            p = mask_group.shape[0]
+            predictor_out = self.predictor(
+                context_patch_tokens,
+                context_masks=context_masks,
+                masks=mask_group,
+                context_pos_embed=self.target_encoder.pos_embed,
+            )
+            predictor_out = torch.cat(predictor_out, dim=0)
+            predictor_out = einops.rearrange(
+                predictor_out,
+                "(p k b) t n c -> k p b t n c",
+                k=k,
+                p=p,
+                b=b,
+                n=mask_group.shape[-1],
+            )
 
-        target_masked = einops.repeat(
-            target_masked,
-            "p b t n c -> k p b t n c",
-            k=k,
-        )
+            target_masked = self.target_encoder.apply_tubelet_masks(
+                target_patch_tokens,
+                masks=mask_group,
+            )
+            target_masked = einops.rearrange(
+                target_masked,
+                "(p b) t n c -> p b t n c",
+                b=b,
+                p=p,
+            )
+            target_masked = einops.repeat(
+                target_masked,
+                "p b t n c -> k p b t n c",
+                k=k,
+            )
+            return predictor_out, target_masked.detach()
 
-        loss = self.jepa_loss(predictor_out, target_masked.detach())
+        if isinstance(target_masks, torch.Tensor):
+            predictor_out, target_masked = predict_mask_group(target_masks)
+            return self.jepa_loss(predictor_out, target_masked)
 
-        return loss
+        # Predictor batches masks with the same token count. Loss is first
+        # reduced per target, then averaged across targets, so large global
+        # masks do not outweigh small local masks merely by containing more
+        # sensor tokens.
+        masks_by_size: Dict[int, List[torch.Tensor]] = {}
+        for target_mask in target_masks:
+            masks_by_size.setdefault(target_mask.shape[-1], []).append(target_mask)
+
+        per_target_losses = []
+        for same_size_masks in masks_by_size.values():
+            mask_group = torch.stack(same_size_masks, dim=0)
+            predictor_out, target_masked = predict_mask_group(mask_group)
+            per_target_losses.append(
+                F.mse_loss(predictor_out, target_masked, reduction="none").mean(
+                    dim=(0, 2, 3, 4, 5)
+                )
+            )
+        return torch.cat(per_target_losses).mean()
 
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
         self.step = self.step + 1
@@ -396,6 +430,11 @@ class XelaJEPAModule(Module, nn.Module):
                 x,
                 graph_info=batch.get("graph"),
             )
+        context_masks = context_masks.to(x.device)
+        if isinstance(target_masks, torch.Tensor):
+            target_masks = target_masks.to(x.device)
+        else:
+            target_masks = [target_mask.to(x.device) for target_mask in target_masks]
 
         ssl_loss = self.forward(x, context_masks, target_masks)
 

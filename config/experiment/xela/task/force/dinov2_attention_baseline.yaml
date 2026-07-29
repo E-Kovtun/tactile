@@ -18,8 +18,8 @@ spatial_attention_layers: 1
 spatial_attention_heads: 12
 spatial_distance_hidden_dim: 16
 spatial_distance_bias: false
-experiment_name: downstream_force_dinov2
-run_name: attention_baseline_l${spatial_attention_layers}_h${spatial_attention_heads}_${oc.env:TACTILE_RUN_TIMESTAMP}
+experiment_name: downstream_force_dinov2_nopos
+run_name: attention_baseline_l${spatial_attention_layers}_h${spatial_attention_heads}
 
 data:
   dataset:
@@ -28,9 +28,9 @@ data:
         use_spatial_coords: true
 
 task:
-  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/pretrain_dinov2_encoder_dinov2/2026.07.14_22-31/checkpoints/epoch-0500.ckpt
+  checkpoint_encoder: /workspace-SR004.nfs2/kovtun/tactile/experiments/pretrain_nopos_dinov2/2026.05.25_18-32/checkpoints/epoch-0500.ckpt
   model_encoder:
-    in_chans: 6
+    in_chans: 3
     num_register_tokens: 1
     with_masktoken: true
 

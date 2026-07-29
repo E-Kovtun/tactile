@@ -14,6 +14,7 @@ from tactile_ssl.data.xela.utils import (
     XELA_FLATTEN_ORDER,
 )
 from tactile_ssl.evaluation.ids import stable_int64_id
+from tactile_ssl.graph.utils import HAND_PART_ORDER, SENSOR_TO_HAND_PART
 from tactile_ssl.utils.logging import get_pylogger
 
 torch.set_printoptions(precision=4, sci_mode=False)
@@ -265,7 +266,38 @@ class XelaGraphSSLDataset(XelaSSLDataset):
             config.graph.edge_attr_mode = "distance"
         if config.graph.get("bridge_k") is None:
             config.graph.bridge_k = 4
+        if config.graph.get("node_group_mode") is None:
+            config.graph.node_group_mode = "link"
         super().__init__(config=config, *args, **kwargs)
+        node_group_mode = str(config.graph.node_group_mode)
+        if node_group_mode == "link":
+            self.node_group_id = torch.repeat_interleave(
+                torch.arange(len(XELA_FLATTEN_ORDER), dtype=torch.long),
+                torch.tensor(list(XELA_FLATTEN_ORDER.values()), dtype=torch.long),
+            )
+        elif node_group_mode in {"hand_part", "hypertaxel"}:
+            part_to_group = {
+                hand_part: group_id
+                for group_id, hand_part in enumerate(HAND_PART_ORDER)
+            }
+            self.node_group_id = torch.tensor(
+                [
+                    part_to_group[SENSOR_TO_HAND_PART[sensor_id]]
+                    for sensor_id in range(len(SENSOR_TO_HAND_PART))
+                ],
+                dtype=torch.long,
+            )
+        else:
+            raise ValueError(
+                "graph.node_group_mode must be 'link', 'hand_part', or "
+                f"'hypertaxel'; got {node_group_mode!r}"
+            )
+
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        if "graph" in sample:
+            sample["graph"]["node_group_id"] = self.node_group_id
+        return sample
 
 
 if __name__ == "__main__":
