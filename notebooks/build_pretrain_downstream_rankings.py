@@ -1,7 +1,7 @@
 """Build the rank-based pretrain comparison notebook.
 
-The generated notebook reads the normalized metric snapshot from
-outputs/graph_jepa_results_20260727/pretrain_downstream_metrics.csv.
+The generated notebook discovers completed downstream runs directly under
+``experiments`` and derives the metrics from their evaluation artifacts.
 """
 
 from pathlib import Path
@@ -24,11 +24,11 @@ def code(text: str):
 nb = nbf.v4.new_notebook()
 nb["metadata"] = {
     "kernelspec": {
-        "display_name": "Python (IAD)",
+        "display_name": "Python [conda env: /workspace-SR004.nfs2/konovalov/conda_tactile_env]",
         "language": "python",
-        "name": "python3",
+        "name": "conda-env-conda_tactile_env-2-py",
     },
-    "language_info": {"name": "python", "version": "3.11"},
+    "language_info": {"name": "python", "version": "3.10.20"},
 }
 
 nb["cells"] = [
@@ -48,8 +48,10 @@ nb["cells"] = [
 4. профиль от локальной к глобальной информации;
 5. общий топ.
 
-Основное множество — только методы с претрейном. `Random / MLP / WL+MLP / GNN`
-показаны как downstream-референсы, но не влияют на места претрейнов.
+Ноутбук каждый раз заново сканирует `experiments/downstream_*`. Для каждого
+претрейн-чекпойнта берётся самый свежий завершённый запуск каждой задачи;
+другие запуски сохраняются в отчёте о сборе. Основное множество — только
+методы с претрейном. Референсы показаны отдельно и не влияют на места претрейнов.
 """
     ),
     md(
@@ -73,6 +75,9 @@ nb["cells"] = [
     ),
     code(
         r"""
+import json
+import re
+import sys
 from pathlib import Path
 import warnings
 
@@ -82,6 +87,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from IPython.display import display, Markdown
 from scipy.stats import spearmanr
+
+EXPECTED_PYTHON = Path("/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python")
+print(f"Python kernel: {sys.executable}")
+if EXPECTED_PYTHON.exists() and Path(sys.executable).resolve() != EXPECTED_PYTHON.resolve():
+    raise RuntimeError(
+        "Неверный kernel. Ожидался "
+        f"{EXPECTED_PYTHON}, а запущен {Path(sys.executable).resolve()}"
+    )
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 pd.set_option("display.max_colwidth", 100)
@@ -108,17 +121,165 @@ COLORS = {
 def find_repo_root():
     candidates = [Path.cwd(), Path.cwd().parent, Path.cwd().parent.parent]
     for candidate in candidates:
-        if (candidate / "outputs" / "graph_jepa_results_20260727").exists():
+        if (candidate / "experiments").is_dir():
             return candidate
-    raise FileNotFoundError("Не найден outputs/graph_jepa_results_20260727")
+    raise FileNotFoundError("Не найден каталог experiments")
 
 ROOT = find_repo_root()
-DATA_PATH = ROOT / "outputs" / "graph_jepa_results_20260727" / "pretrain_downstream_metrics.csv"
-data_all = pd.read_csv(DATA_PATH)
+EXPERIMENTS = ROOT / "experiments"
+
+TASKS = {
+    "force": ("downstream_force_", {
+        "force_rmse": ("rmse", None, None),
+        "force_rmse_x": ("rmse", 0, None),
+        "force_rmse_y": ("rmse", 1, None),
+        "force_rmse_z": ("rmse", 2, None),
+    }),
+    "pose": ("downstream_pose_", {
+        "pose_rmse_x": ("rmse", 0, None),
+        "pose_rmse_y": ("rmse", 1, None),
+        "pose_rmse_theta": ("rmse", 2, None),
+        "pose_acc_x": ("accuracy", 0, 0.02),
+        "pose_acc_y": ("accuracy", 1, 0.02),
+        "pose_acc_theta": ("accuracy", 2, 5.0),
+    }),
+    "object": ("downstream_object_classification_", {
+        "object_acc": ("accuracy", None, None),
+    }),
+}
+
+def _config_value(run_root, key):
+    # Read a scalar from the saved Hydra config without resolving Hydra syntax.
+    for path in (run_root / "config.yaml", run_root / ".hydra" / "config.yaml"):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        match = re.search(rf"(?m)^\s*{re.escape(key)}:\s*(.+?)\s*$", text)
+        if match:
+            value = match.group(1).strip().strip(" \\\"'")
+            if not value.startswith("${"):
+                return value
+    return None
+
+def _checkpoint_id(raw_checkpoint, run_root):
+    if raw_checkpoint and not raw_checkpoint.startswith("${"):
+        return raw_checkpoint
+    return f"reference::{run_root}"
+
+def _method_label(checkpoint_id, run_root):
+    if checkpoint_id.startswith("reference::"):
+        return run_root.name
+    checkpoint_path = Path(checkpoint_id)
+    run_name = checkpoint_path.parent.parent.name if checkpoint_path.parent.name == "checkpoints" else checkpoint_path.stem
+    run_name = re.sub(r"_?20\d{2}\.\d{2}\.\d{2}.*$", "", run_name)
+    return run_name.replace("_", " ") or checkpoint_path.parent.name
+
+def _family(checkpoint_id, is_pretrain):
+    if not is_pretrain:
+        return "Downstream reference"
+    lowered = checkpoint_id.lower()
+    if "jepa_graph" in lowered:
+        return "Graph JEPA"
+    if "jepa" in lowered:
+        return "Legacy JEPA"
+    return "DINO / spatial pretrain"
+
+def _score(y_true, y_pred, kind, axis=None, threshold=None):
+    if axis is not None:
+        y_true = y_true[..., axis]
+        y_pred = y_pred[..., axis]
+    if kind == "rmse":
+        return float(np.sqrt(np.mean((y_pred.astype(float) - y_true.astype(float)) ** 2)))
+    if threshold is None:
+        return float(np.mean(y_pred == y_true))
+    return float(np.mean(np.abs(y_pred.astype(float) - y_true.astype(float)) < threshold))
+
+def _collect_downstream_runs():
+    # Collect every completed downstream artifact and consolidate by pretrain checkpoint.
+    raw_rows = []
+    for experiment_dir in sorted(EXPERIMENTS.iterdir()):
+        if not experiment_dir.is_dir():
+            continue
+        task = next((name for name, (prefix, _) in TASKS.items()
+                     if experiment_dir.name.startswith(prefix)), None)
+        if task is None:
+            continue
+        for evaluation_dir in sorted(experiment_dir.glob("*/evaluation")):
+            predictions_path = evaluation_dir / "test_predictions.npz"
+            manifest_path = evaluation_dir / "manifest.json"
+            if not predictions_path.is_file() or not manifest_path.is_file():
+                continue
+            run_root = evaluation_dir.parent
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            with np.load(predictions_path, allow_pickle=False) as arrays:
+                y_true = np.asarray(arrays["y_true"])
+                y_pred = np.asarray(arrays["y_pred"])
+            metrics = {
+                column: _score(y_true, y_pred, kind, axis, threshold)
+                for column, (kind, axis, threshold) in TASKS[task][1].items()
+            }
+            raw_checkpoint = _config_value(run_root, "checkpoint_encoder")
+            checkpoint_id = _checkpoint_id(raw_checkpoint, run_root)
+            is_pretrain = ("/pretrain_" in checkpoint_id.lower()
+                           or "/pretrain/" in checkpoint_id.lower())
+            raw_rows.append({
+                "task": task,
+                "method_id": checkpoint_id,
+                "method": _method_label(checkpoint_id, run_root),
+                "family": _family(checkpoint_id, is_pretrain),
+                "is_pretrain": is_pretrain,
+                "run_path": str(run_root),
+                "run_name": run_root.name,
+                "artifact_mtime": predictions_path.stat().st_mtime_ns,
+                **metrics,
+            })
+
+    raw_runs = pd.DataFrame(raw_rows)
+    if raw_runs.empty:
+        raise FileNotFoundError("Не найдены evaluation-артефакты в experiments/downstream_*")
+
+    # Several probe-head sweeps can point to the same encoder. Keep the newest
+    # completed run for each (encoder, task), but expose all discovered runs below.
+    selected = (raw_runs.sort_values("artifact_mtime")
+                .drop_duplicates(["method_id", "task"], keep="last"))
+    metric_columns = [column for _, (_, metrics) in TASKS.items() for column in metrics]
+    rows = []
+    for method_id, group in selected.groupby("method_id", sort=False):
+        first = group.iloc[0]
+        row = {
+            "method_id": method_id,
+            "method": first["method"],
+            "family": first["family"],
+            "is_pretrain": bool(first["is_pretrain"]),
+            "run_count": int(len(raw_runs[raw_runs.method_id == method_id])),
+            "selected_runs": "; ".join(group["run_path"]),
+        }
+        row.update({column: np.nan for column in metric_columns})
+        for _, selected_row in group.iterrows():
+            row.update({column: selected_row[column] for column in TASKS[selected_row.task][1]})
+        rows.append(row)
+    collected = pd.DataFrame(rows)
+    return collected, raw_runs, selected
+
+data_all, raw_runs, selected_runs = _collect_downstream_runs()
 data_all["is_pretrain"] = data_all["is_pretrain"].astype(bool)
 
-print(f"Источник: {DATA_PATH.relative_to(ROOT)}")
-print(f"Строк: {len(data_all)}; претрейнов: {data_all.is_pretrain.sum()}; референсов: {(~data_all.is_pretrain).sum()}")
+required_metrics = [column for _, (_, metrics) in TASKS.items() for column in metrics]
+data_all["complete"] = data_all[required_metrics].notna().all(axis=1)
+print(
+    f"Источник: {EXPERIMENTS.relative_to(ROOT)}; "
+    f"артефактов: {len(raw_runs)}; методов: {len(data_all)}; "
+    f"полных методов: {data_all.complete.sum()}"
+)
+display(
+    data_all.groupby(["is_pretrain", "complete"], dropna=False).size()
+    .rename("Число методов").to_frame()
+)
+display(
+    raw_runs.groupby(["task", "is_pretrain"], dropna=False).size()
+    .rename("Найдено запусков").to_frame()
+)
+
 """
     ),
     code(
@@ -152,8 +313,16 @@ SHORT_NAMES = {
 }
 
 data_all["label"] = data_all["method"].map(SHORT_NAMES).fillna(data_all["method"])
-pre = data_all[data_all.is_pretrain].copy().reset_index(drop=True)
+pre = data_all[data_all.is_pretrain & data_all.complete].copy().reset_index(drop=True)
 refs = data_all[~data_all.is_pretrain].copy().reset_index(drop=True)
+
+incomplete_pre = data_all[data_all.is_pretrain & ~data_all.complete]
+if not incomplete_pre.empty:
+    display(
+        incomplete_pre[["method", "family", "run_count", "selected_runs"]]
+        .rename(columns={"method": "Метод", "family": "Семейство", "run_count": "Запусков"})
+    )
+print(f"В ранжирование включено полных претрейнов: {len(pre)}")
 
 lower_is_better = [
     "force_rmse", "force_rmse_x", "force_rmse_y", "force_rmse_z",

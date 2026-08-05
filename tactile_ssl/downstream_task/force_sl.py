@@ -19,7 +19,7 @@ The module provides specialized implementations for estimating 3D force vectors 
 or only normal forces (Fz) from tactile sensor readings using Sparsh embeddings.
 """
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Literal
 from functools import partial
 import einops
 
@@ -108,6 +108,7 @@ class ForceSLModule(SLModule):
         optim_cfg: partial,
         scheduler_cfg: Optional[partial],
         checkpoint_encoder: Optional[str] = None,
+        checkpoint_coordinate_encoder: Optional[str] = None,
         checkpoint_task: Optional[str] = None,
         train_encoder: bool = False,
         encoder_type: str = "jepa",
@@ -119,6 +120,7 @@ class ForceSLModule(SLModule):
             optim_cfg=optim_cfg,
             scheduler_cfg=scheduler_cfg,
             checkpoint_encoder=checkpoint_encoder,
+            checkpoint_coordinate_encoder=checkpoint_coordinate_encoder,
             checkpoint_task=checkpoint_task,
             train_encoder=train_encoder,
             encoder_type=encoder_type,
@@ -387,27 +389,38 @@ class XelaForceLinearProbe(nn.Module):
         with_last_activations=False,
         only_normal_force=False,
         pad_id=None,
+        pooling_type: Literal["attention", "mean"] = "attention",
     ):
         super().__init__()
         self.only_normal_force = only_normal_force
         self.n_outputs = n_outputs if not only_normal_force else 1
         self.init_std = init_std
         self.pad_id = pad_id
+        self.pooling_type = pooling_type
 
         if self.pad_id is not None:
             self.pad_range = get_pad_xela_indexes(pad_id)
 
+        if self.pooling_type not in {"attention", "mean"}:
+            raise ValueError(
+                f"Unsupported pooling_type={self.pooling_type!r}; expected 'attention' or 'mean'"
+            )
+
         embed_dim = VIT_EMBED_DIMS[f"vit_{embed_dim}"]
-        self.pooler = AttentivePooler(
-            num_queries=1,
-            embed_dim=embed_dim,
-            num_heads=num_heads,
-            mlp_ratio=mlp_ratio,
-            depth=1,
-            norm_layer=norm_layer,
-            qkv_bias=qkv_bias,
-            init_std=init_std,
-            complete_block=complete_block,
+        self.pooler = (
+            AttentivePooler(
+                num_queries=1,
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                depth=1,
+                norm_layer=norm_layer,
+                qkv_bias=qkv_bias,
+                init_std=init_std,
+                complete_block=complete_block,
+            )
+            if self.pooling_type == "attention"
+            else None
         )
         # self.blocks = nn.ModuleList(
         #     [
@@ -472,8 +485,11 @@ class XelaForceLinearProbe(nn.Module):
             z = z[:, :, self.pad_range[0]:self.pad_range[1], :]
 
         b, t, _, c = z.shape
-        z = self.pooler(z.flatten(0, 1))
-        z = z.view(b, t, c)
+        if self.pooling_type == "attention":
+            assert self.pooler is not None
+            z = self.pooler(z.flatten(0, 1)).view(b, t, c)
+        else:
+            z = z.mean(dim=2)
         z = z.squeeze(1)
 
         # pos_embed = self.pos_embed_fn(z.device).float().unsqueeze(0)
@@ -841,10 +857,8 @@ class XelaForceSLModule(ForceSLModule):
         z = F.layer_norm(z, (z.shape[-1],))
         z = einops.rearrange(z, "(b l) n c -> b l n c", l=chunked_time)
 
-        if self.train_encoder:
-            y_pred = self.model_task(z, spatial_coords=spatial_coords, graph_info=graph_info)
-        else:
-            y_pred = self.model_task(z.detach(), spatial_coords=spatial_coords, graph_info=graph_info)
+        z = self._encoder_output_for_task(z)
+        y_pred = self.model_task(z, spatial_coords=spatial_coords, graph_info=graph_info)
         return y_pred.squeeze(1)
 
     def step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:

@@ -111,6 +111,65 @@ class XelaObjectConcatEmbeddingBaselineClassifier(nn.Module):
         return self.probe(self.baseline_fusion(signal_embedding))
 
 
+class XelaObjectTokenMLPClassifier(nn.Module):
+    """Pool full-hand patch tokens and classify them with a two-layer MLP."""
+
+    expects_patch_tokens = True
+
+    def __init__(
+        self,
+        input_embed_dim: int,
+        classes: List[str],
+        class_weights: Optional[List[float]] = None,
+        pooling_type: str = "mean",
+        num_heads: int = 2,
+        hidden_dim: int = 48,
+        mlp_ratio: float = 4.0,
+        init_std: float = 0.02,
+    ):
+        super().__init__()
+        if pooling_type not in {"attention", "mean"}:
+            raise ValueError(
+                f"Unsupported pooling_type={pooling_type!r}; expected 'attention' or 'mean'"
+            )
+        if hidden_dim <= 0:
+            raise ValueError("hidden_dim must be positive")
+
+        self.num_classes = len(classes)
+        self.class_weights = torch.Tensor(class_weights).float() if class_weights is not None else None
+        self.pooling_type = pooling_type
+        self.pooler = (
+            AttentivePooler(
+                num_queries=1,
+                embed_dim=input_embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                depth=1,
+                init_std=init_std,
+            )
+            if pooling_type == "attention"
+            else None
+        )
+        self.probe = nn.Sequential(
+            nn.Linear(input_embed_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, self.num_classes),
+        )
+
+    def forward(self, patch_tokens):
+        if patch_tokens.ndim != 3:
+            raise ValueError(
+                "patch_tokens must have shape [batch, tokens, embedding]; "
+                f"got {tuple(patch_tokens.shape)}"
+            )
+        if self.pooling_type == "attention":
+            assert self.pooler is not None
+            embedding = self.pooler(patch_tokens).squeeze(1)
+        else:
+            embedding = patch_tokens.mean(dim=1)
+        return self.probe(embedding)
+
+
 class XelaObjectSpatialWLMLPClassifier(nn.Module):
     """Object classifier with a physical-graph WL embedding of sensor coordinates."""
 
@@ -254,12 +313,15 @@ class XelaObjectSLModule(SLModule):
 
         graph_info = self._graph_to_device(batch.get("graph"), sensor_data.device)
         encoder_output = self._forward_encoder(sensor_data, graph_info=graph_info)
-        if self.model_encoder.num_register_tokens > 0:
-            cls_embedding = encoder_output["x_norm_regtokens"].squeeze(1)
+        if getattr(self.model_task, "expects_patch_tokens", False):
+            task_input = self._encoder_output_for_task(encoder_output["x_norm_patchtokens"])
         else:
-            assert self.model_encoder.num_register_tokens == 0
-            cls_embedding = torch.mean(encoder_output["x_norm_patchtokens"], dim=1)
-        task_input = cls_embedding if self.train_encoder else cls_embedding.detach()
+            if self.model_encoder.num_register_tokens > 0:
+                cls_embedding = encoder_output["x_norm_regtokens"].squeeze(1)
+            else:
+                assert self.model_encoder.num_register_tokens == 0
+                cls_embedding = torch.mean(encoder_output["x_norm_patchtokens"], dim=1)
+            task_input = self._encoder_output_for_task(cls_embedding)
         if getattr(self.model_task, "supports_spatial_graph", False):
             pred_logits = self.model_task(task_input, spatial_coords=spatial_coords, graph_info=graph_info)
         elif getattr(self.model_task, "supports_spatial_coords", False):

@@ -340,7 +340,15 @@ class XelaJEPAModule(Module, nn.Module):
         # group-specific target scales.
         k = context_masks.shape[0]
         b = context_masks.shape[1]
-        context_out = self.context_encoder.forward_features(xs, masks=context_masks, mask_type='tubelet')        # do we need the same or separate pos_embed compared to jepa decoder
+        auxiliary_embedding = None
+        if getattr(self.context_encoder, "input_fusion", "joint") == "fresh_random":
+            auxiliary_embedding = self.context_encoder.sample_fresh_random_embedding(xs)
+        context_out = self.context_encoder.forward_features(
+            xs,
+            masks=context_masks,
+            mask_type="tubelet",
+            auxiliary_embedding=auxiliary_embedding,
+        )
         context_patch_tokens = context_out["x_norm_patchtokens"] # (b k) x (t n1) x c
         
         context_patch_tokens = einops.rearrange(
@@ -350,7 +358,10 @@ class XelaJEPAModule(Module, nn.Module):
         )
 
         with torch.no_grad():
-            target_out = self.target_encoder.forward_features(xs) 
+            target_out = self.target_encoder.forward_features(
+                xs,
+                auxiliary_embedding=auxiliary_embedding,
+            )
         target_patch_tokens = target_out["x_norm_patchtokens"] # b x (t n) x c
 
         target_patch_tokens = einops.rearrange(

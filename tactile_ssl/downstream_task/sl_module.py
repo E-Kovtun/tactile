@@ -55,6 +55,7 @@ class SLModule(Module, nn.Module):
         optim_cfg: partial,
         scheduler_cfg: Optional[partial],
         checkpoint_encoder: Optional[str] = None,
+        checkpoint_coordinate_encoder: Optional[str] = None,
         checkpoint_task: Optional[str] = None,
         train_encoder: bool = False,
         encoder_type: str = "jepa",
@@ -66,7 +67,33 @@ class SLModule(Module, nn.Module):
         self.train_encoder: bool = train_encoder
         self.encoder_type: str = encoder_type
 
-        if checkpoint_encoder is not None:
+        is_late_fusion = bool(getattr(self.model_encoder, "trainable_fusion", False))
+        if is_late_fusion:
+            if checkpoint_encoder is None:
+                raise ValueError("Late fusion requires checkpoint_encoder for the signal branch")
+            self.load_encoder(
+                checkpoint_encoder,
+                encoder=self.model_encoder.signal_encoder,
+            )
+            if self.model_encoder.coordinate_encoder is not None:
+                if checkpoint_coordinate_encoder is None:
+                    raise ValueError(
+                        "Late fusion with a coordinate branch requires "
+                        "checkpoint_coordinate_encoder"
+                    )
+                self.load_encoder(
+                    checkpoint_coordinate_encoder,
+                    encoder=self.model_encoder.coordinate_encoder,
+                )
+            elif checkpoint_coordinate_encoder is not None:
+                raise ValueError(
+                    "checkpoint_coordinate_encoder was provided without a coordinate branch"
+                )
+        elif checkpoint_coordinate_encoder is not None:
+            raise ValueError(
+                "checkpoint_coordinate_encoder is only valid for a late-fusion encoder"
+            )
+        elif checkpoint_encoder is not None:
             log.info("Loading encoder ONLY from checkpoint.")
             self.load_encoder(checkpoint_encoder)
         else:
@@ -79,7 +106,9 @@ class SLModule(Module, nn.Module):
         self._configure_encoder_normalization(encoder_normalization_float32)
 
         # freeze encoder
-        if not self.train_encoder:
+        if is_late_fusion:
+            self.model_encoder.freeze_backbones()
+        elif not self.train_encoder:
             self.model_encoder.requires_grad_(False)
             self.model_encoder.eval()
         self.scheduler_partial = scheduler_cfg
@@ -172,7 +201,11 @@ class SLModule(Module, nn.Module):
             log.info(f"{e} Could not load task model from {checkpoint_task}")
             raise ValueError()
 
-    def load_encoder(self, checkpoint_encoder: str):
+    def load_encoder(
+        self,
+        checkpoint_encoder: str,
+        encoder: Optional[nn.Module] = None,
+    ):
         log.info(f"Loading encoder from {checkpoint_encoder}")
         checkpoint = torch.load(checkpoint_encoder, weights_only=False)
         if "jepa" in self.encoder_type:
@@ -190,9 +223,16 @@ class SLModule(Module, nn.Module):
             new_key: checkpoint["model"][target_key] for new_key, target_key in zip(new_keys, target_keys)
         }
         # load the state_dict into the model
-        self.model_encoder.load_state_dict(new_state_dict, strict=True)
+        target_encoder = self.model_encoder if encoder is None else encoder
+        target_encoder.load_state_dict(new_state_dict, strict=True)
         # log.info(f"Loaded encoder from {checkpoint_encoder}")
         print(f"Loaded encoder from {checkpoint_encoder}")
+
+    def _encoder_output_for_task(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Detach frozen encoders while retaining gradients through late fusion."""
+        if self.train_encoder or getattr(self.model_encoder, "trainable_fusion", False):
+            return tensor
+        return tensor.detach()
 
     def forward(self, x, *args, **kwargs):  # noqa
         raise NotImplementedError

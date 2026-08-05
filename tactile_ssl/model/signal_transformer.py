@@ -263,8 +263,9 @@ class SignalTransformer(nn.Module):
         masks: Optional[List[torch.Tensor]] = None,
         mask_type: Optional[Literal["block", "tubelet"]] = None,
         masktoken_masks: Optional[List[torch.Tensor]] = None,
+        **pre_embed_kwargs,
     ):
-        x = self.pre_embed(x)
+        x = self.pre_embed(x, **pre_embed_kwargs)
         x, bias = self.prepare_tokens_with_mask(x, masks, mask_type, masktoken_masks)
         x_prenorm, x_postnorm = self.transform(x, bias)
 
@@ -278,8 +279,14 @@ class SignalTransformer(nn.Module):
         }
         return out
 
-    def forward(self, x, masks=None, mask_type=None, masktoken_masks=None):
-        out = self.forward_features(x, masks, mask_type, masktoken_masks)
+    def forward(self, x, masks=None, mask_type=None, masktoken_masks=None, **pre_embed_kwargs):
+        out = self.forward_features(
+            x,
+            masks,
+            mask_type,
+            masktoken_masks,
+            **pre_embed_kwargs,
+        )
         return self.head(out["x_norm_patchtokens"])
 
 

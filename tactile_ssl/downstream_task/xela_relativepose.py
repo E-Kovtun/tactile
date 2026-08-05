@@ -391,7 +391,6 @@ class XelaRelativePoseSpatialAttentionDecoder(XelaRelativePoseDecoder):
 class XelaRelativePoseModule(SLModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(self.model_encoder, SignalTransformer), "Model encoder must be a SignalTransformer"
         self.sequence_length, self.time_chunk_size = (
             self.model_encoder.sequence_length,
             self.model_encoder.time_chunk_size,
@@ -467,10 +466,8 @@ class XelaRelativePoseModule(SLModule):
         z = F.layer_norm(z, (z.shape[-1],))
         z = einops.rearrange(z, "(b l) n c -> b l n c", l=chunked_time)
 
-        if self.train_encoder:
-            y_pred = self.model_task(z, spatial_coords=spatial_coords, graph_info=graph_info)
-        else:
-            y_pred = self.model_task(z.detach(), spatial_coords=spatial_coords, graph_info=graph_info)
+        z = self._encoder_output_for_task(z)
+        y_pred = self.model_task(z, spatial_coords=spatial_coords, graph_info=graph_info)
         return y_pred
 
     def step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:

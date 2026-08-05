@@ -2,6 +2,7 @@ import heapq
 import math
 from collections import deque
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, Optional, Union
 
 import numpy as np
@@ -24,6 +25,18 @@ TargetRegionStrategy = Literal[
     "geodesic_endcaps",
     "topological_endcaps",
 ]
+
+
+@dataclass(frozen=True)
+class _StratifiedConnectedLobePlan:
+    """Graph-only work shared by all stratified targets for one sample."""
+
+    group_ids: torch.Tensor
+    groups: torch.Tensor
+    base_size: int
+    remainder: int
+    induced_adjacencies: tuple[Sequence[Sequence[tuple[int, float]]], ...]
+    eligible_by_quota: tuple[Mapping[int, Sequence[int]], ...]
 
 
 def _as_cpu_tensor(value, *, dtype: torch.dtype) -> torch.Tensor:
@@ -102,6 +115,31 @@ def _connected_components(
             for neighbor, _ in adjacency[node]:
                 if not seen[neighbor]:
                     seen[neighbor] = True
+                    stack.append(neighbor)
+        components.append(component)
+    return components
+
+
+def _connected_components_for_nodes(
+    adjacency: Sequence[Sequence[tuple[int, float]]],
+    nodes: Sequence[int],
+) -> list[list[int]]:
+    """Find components restricted to ``nodes`` without scanning empty outsiders."""
+    allowed = set(nodes)
+    seen: set[int] = set()
+    components: list[list[int]] = []
+    for start in nodes:
+        if start in seen:
+            continue
+        stack = [start]
+        seen.add(start)
+        component: list[int] = []
+        while stack:
+            node = stack.pop()
+            component.append(node)
+            for neighbor, _ in adjacency[node]:
+                if neighbor in allowed and neighbor not in seen:
+                    seen.add(neighbor)
                     stack.append(neighbor)
         components.append(component)
     return components
@@ -656,22 +694,15 @@ def sample_stratified_random_region(
     return selected[torch.randperm(selected.numel(), generator=generator)]
 
 
-def _sample_stratified_connected_lobes_from_adjacency(
+def _prepare_stratified_connected_lobe_plan(
     adjacency: Sequence[Sequence[tuple[int, float]]],
     node_group_id,
     size: int,
     *,
-    growth: GrowthStrategy = "dijkstra",
     min_per_group: int = 1,
     remainder_allocation: str = "equal",
-    generator: Optional[torch.Generator] = None,
-) -> torch.Tensor:
-    """Sample one connected lobe inside every node group.
-
-    The overall target is generally disconnected. Its exact token budget is
-    divided as evenly as possible between groups; randomized remainder
-    assignment prevents the same groups from always receiving the extra token.
-    """
+) -> _StratifiedConnectedLobePlan:
+    """Prepare group subgraphs and eligible seeds without consuming RNG."""
     group_ids = _as_cpu_tensor(node_group_id, dtype=torch.long).reshape(-1)
     size = int(size)
     min_per_group = int(min_per_group)
@@ -701,49 +732,112 @@ def _sample_stratified_connected_lobes_from_adjacency(
             f"Equal lobe allocation gives only {base_size} nodes per group, "
             f"below min_per_group={min_per_group}"
         )
-    quotas = torch.full((num_groups,), base_size, dtype=torch.long)
-    if remainder:
-        extra_order = torch.randperm(num_groups, generator=generator)
-        quotas[extra_order[:remainder]] += 1
 
-    lobes: list[torch.Tensor] = []
-    for group_index, group in enumerate(groups):
+    induced_adjacencies = []
+    eligible_by_quota = []
+    group_id_values = group_ids.tolist()
+    possible_quotas = {base_size}
+    if remainder:
+        possible_quotas.add(base_size + 1)
+    for group in groups:
         group_mask = group_ids == group
         group_nodes = torch.nonzero(group_mask, as_tuple=False).reshape(-1)
-        quota = int(quotas[group_index].item())
-        if group_nodes.numel() < quota:
+        group_node_values = group_nodes.tolist()
+        group_value = int(group)
+        max_quota = max(possible_quotas)
+        if group_nodes.numel() < max_quota:
             raise ValueError(
                 f"Node group {int(group)} contains {group_nodes.numel()} nodes, "
-                f"below its equal lobe quota {quota}"
+                f"below its equal lobe quota {max_quota}"
             )
 
         induced_adjacency: list[list[tuple[int, float]]] = [
             [] for _ in range(len(adjacency))
         ]
-        for node in group_nodes.tolist():
+        for node in group_node_values:
             induced_adjacency[node] = [
                 (neighbor, weight)
                 for neighbor, weight in adjacency[node]
-                if bool(group_mask[neighbor])
+                if group_id_values[neighbor] == group_value
             ]
-        eligible = _eligible_seed_nodes(induced_adjacency, quota)
-        if not eligible:
-            raise ValueError(
-                f"Node group {int(group)} has no connected component "
-                f"large enough for a {quota}-node lobe"
+        components = _connected_components_for_nodes(
+            induced_adjacency,
+            group_node_values,
+        )
+        group_eligible_by_quota = {}
+        for quota in possible_quotas:
+            eligible = _eligible_seed_nodes(
+                induced_adjacency,
+                quota,
+                components,
             )
+            if not eligible:
+                raise ValueError(
+                    f"Node group {int(group)} has no connected component "
+                    f"large enough for a {quota}-node lobe"
+                )
+            group_eligible_by_quota[quota] = eligible
+        induced_adjacencies.append(induced_adjacency)
+        eligible_by_quota.append(group_eligible_by_quota)
+
+    return _StratifiedConnectedLobePlan(
+        group_ids=group_ids,
+        groups=groups,
+        base_size=base_size,
+        remainder=remainder,
+        induced_adjacencies=tuple(induced_adjacencies),
+        eligible_by_quota=tuple(eligible_by_quota),
+    )
+
+
+def _sample_stratified_connected_lobes_from_adjacency(
+    adjacency: Sequence[Sequence[tuple[int, float]]],
+    node_group_id,
+    size: int,
+    *,
+    growth: GrowthStrategy = "dijkstra",
+    min_per_group: int = 1,
+    remainder_allocation: str = "equal",
+    generator: Optional[torch.Generator] = None,
+    prepared_plan: Optional[_StratifiedConnectedLobePlan] = None,
+) -> torch.Tensor:
+    """Sample one connected lobe inside every node group.
+
+    The overall target is generally disconnected. Its exact token budget is
+    divided as evenly as possible between groups; randomized remainder
+    assignment prevents the same groups from always receiving the extra token.
+    """
+    plan = prepared_plan or _prepare_stratified_connected_lobe_plan(
+        adjacency,
+        node_group_id,
+        size,
+        min_per_group=min_per_group,
+        remainder_allocation=remainder_allocation,
+    )
+    quotas = torch.full(
+        (int(plan.groups.numel()),),
+        plan.base_size,
+        dtype=torch.long,
+    )
+    if plan.remainder:
+        extra_order = torch.randperm(int(plan.groups.numel()), generator=generator)
+        quotas[extra_order[: plan.remainder]] += 1
+
+    lobes: list[torch.Tensor] = []
+    for group_index, group in enumerate(plan.groups):
+        quota = int(quotas[group_index].item())
         lobes.append(
             _sample_connected_from_adjacency(
-                induced_adjacency,
+                plan.induced_adjacencies[group_index],
                 quota,
                 growth,
                 generator,
-                eligible,
+                plan.eligible_by_quota[group_index][quota],
             )
         )
 
     selected = torch.cat(lobes)
-    if selected.unique().numel() != size:
+    if selected.unique().numel() != int(size):
         raise RuntimeError(
             "stratified_connected_lobes returned duplicate nodes or an incorrect size"
         )
@@ -868,6 +962,7 @@ def _sample_region(
     node_group_id=None,
     min_per_group: int = 1,
     remainder_allocation: str = "proportional",
+    stratified_connected_plan: Optional[_StratifiedConnectedLobePlan] = None,
 ) -> torch.Tensor:
     if strategy == "connected_region":
         if adjacency is not None:
@@ -919,6 +1014,7 @@ def _sample_region(
                 min_per_group=min_per_group,
                 remainder_allocation=remainder_allocation,
                 generator=generator,
+                prepared_plan=stratified_connected_plan,
             )
         return sample_stratified_connected_lobes(
             graph,
@@ -1368,6 +1464,7 @@ def sample_multiblock_graph_masks(
             else None
         )
         eligible_by_size = {}
+        stratified_plans = {}
         if adjacency is not None:
             components = _connected_components(adjacency)
             if context_strategy == "connected_region":
@@ -1394,13 +1491,26 @@ def sample_multiblock_graph_masks(
                     connected_target_size,
                     components,
                 )
+            if batched_node_group_ids is not None:
+                for group_id, group in enumerate(normalized_target_groups):
+                    if group["strategy"] != "stratified_connected_lobes":
+                        continue
+                    stratified_plans[group_id] = (
+                        _prepare_stratified_connected_lobe_plan(
+                            adjacency,
+                            batched_node_group_ids[sample_id],
+                            group["target_size"],
+                            min_per_group=group["min_per_group"],
+                            remainder_allocation=group["remainder_allocation"],
+                        )
+                    )
 
         accepted_contexts: Optional[list[torch.Tensor]] = None
         accepted_targets: Optional[list[torch.Tensor]] = None
         for _ in range(max_resample_attempts):
             targets: list[torch.Tensor] = []
             targets_valid = True
-            for group in normalized_target_groups:
+            for group_id, group in enumerate(normalized_target_groups):
                 group_targets: list[torch.Tensor] = []
                 group_target_size = group["target_size"]
                 for _ in range(group["count"]):
@@ -1424,19 +1534,25 @@ def sample_multiblock_graph_masks(
                             ),
                             group["min_per_group"],
                             group["remainder_allocation"],
+                            stratified_plans.get(group_id),
                         )
                         max_overlap = group["max_pairwise_overlap_ratio"]
-                        if all(
+                        pairwise_overlap_valid = max_overlap >= 1.0 or all(
                             torch.isin(candidate, previous).sum().item()
                             / float(candidate.numel())
                             <= max_overlap
                             for previous in group_targets
-                        ) and all(
-                            torch.isin(candidate, previous).sum().item()
-                            / float(candidate.numel())
-                            <= group["max_previous_overlap_ratio"]
-                            for previous in targets
-                        ):
+                        )
+                        previous_overlap_valid = (
+                            group["max_previous_overlap_ratio"] >= 1.0
+                            or all(
+                                torch.isin(candidate, previous).sum().item()
+                                / float(candidate.numel())
+                                <= group["max_previous_overlap_ratio"]
+                                for previous in targets
+                            )
+                        )
+                        if pairwise_overlap_valid and previous_overlap_valid:
                             accepted_target = candidate
                             break
                     if accepted_target is None:

@@ -601,6 +601,73 @@ algorithm:
 `node_group_mode: hypertaxel` заменой taxel-type embedding: group IDs нужны
 только collator для построения маски и не передаются энкодеру как embedding.
 
+### Режимы подачи XYZ в XelaTransformer
+
+При `data.features.use_spatial_coords: true` dataset возвращает шесть каналов:
+три магнитных показания и XYZ каждого сенсора. `algorithm.encoder.input_fusion`
+задаёт способ их преобразования:
+
+| Режим | Преобразование |
+|---|---|
+| `joint` | Один `PatchEmbed1d(6 → embed_dim)`, как в исходном Xela DINO |
+| `separate_coordinates` | Отдельные `PatchEmbed1d(3 → embed_dim)` для сигнала и XYZ, concat и `Linear(2D → D)` |
+| `fresh_random` | Signal `PatchEmbed1d(3 → D)`, свежий Gaussian `D`-embedding вместо XYZ, concat и `Linear(2D → D)` |
+
+Для `xela_tiny` `embed_dim=192`. Во всех режимах временная свёртка сохраняется:
+при `sequence_length=10` и `time_chunk_size=10` один token агрегирует десять
+кадров одного сенсора.
+
+Рекомендуемые настройки coordinate-абляции:
+
+```yaml
+algorithm:
+  encoder:
+    in_chans: 6
+    input_fusion: separate_coordinates  # joint | fresh_random
+    signal_chans: 3
+    coordinate_chans: 3
+    random_embedding_std: 1.0
+
+data:
+  features:
+    use_spatial_coords: true
+```
+
+В `fresh_random` XYZ намеренно игнорируются. Шум пересэмплируется на каждом
+forward, но context и target encoder внутри одного JEPA-forward получают один и
+тот же tensor; иначе target содержал бы независимо сэмплированную
+непредсказуемую компоненту. На downstream шум также свежий на каждом forward,
+поэтому этот вариант является заведомо стохастическим control.
+
+### Coordinate-only JEPA и late fusion
+
+Для независимого coordinate-backbone доступны:
+
+- `coordinates_only_patch`: XYZ каждого сенсора за 10 кадров проходят через
+  `PatchEmbed1d(3 channels, length 10, chunk 10)`;
+- `coordinates_only_mean_patch`: XYZ усредняются по 10 кадрам и проходят через
+  `PatchEmbed1d(3 channels, length 1, chunk 1, padding 0)`.
+
+Оба режима ожидают шесть каналов, полностью игнорируют первые три signal-канала
+и не нормализуют абсолютные XYZ статистиками Xela-сигнала.
+
+`XelaLateFusionEncoder` загружает frozen `target_encoder` из signal- и
+coordinate-JEPA, конкатенирует их 192D токены каждого сенсора и обучает
+`PatchEmbed1d(384 channels, length 1, chunk 1, padding 0)` вместе с downstream
+головой. Контроль `fresh_random` заменяет coordinate-токены свежим
+`N(0, 1)` шумом при каждом forward.
+
+Полная возобновляемая очередь:
+
+```bash
+bash scripts/run_jepa_late_fusion_after_coordinate_queue.sh
+```
+
+Она ждёт завершения `run_graph_jepa_coordinate_inputs_queue.sh`, не печатая
+сообщение на каждом poll, затем последовательно строит random control, два
+coordinate-претрейна, их downstream, накопительную JEPA-таблицу и отдельный
+late-fusion отчёт с рангами.
+
 ## Запуск полного пайплайна
 
 ```bash
