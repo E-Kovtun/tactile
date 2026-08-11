@@ -53,7 +53,8 @@ class Trainer:
         early_stopping_patience: Optional[int] = 10, 
         early_stopping_delta: Optional[float] = 0.0, 
         early_stopping_verbose: Optional[bool] = True, 
-        early_stopping_checkpoint_name: Optional[str] = "best"
+        early_stopping_checkpoint_name: Optional[str] = "best",
+        enable_progress_bar: bool = True,
     ) -> None:
         """
         Args:
@@ -131,6 +132,7 @@ class Trainer:
         self.max_steps = max_steps
         self.should_stop = False
         self.sanity_validate = sanity_validate
+        self.enable_progress_bar = enable_progress_bar
 
         self.state = None
         self.training_state = None
@@ -681,7 +683,7 @@ class Trainer:
             total: the total length of the iterable, necessary in case the number of batches was limited.
 
         """
-        if self.fabric.is_global_zero:
+        if self.fabric.is_global_zero and self.enable_progress_bar:
             return tqdm(iterable, total=total, **kwargs)
         return iterable
 

@@ -1131,6 +1131,8 @@ def _normalize_target_groups(
                     else "proportional"
                 ),
                 "max_pairwise_overlap_ratio": 1.0,
+                "overlap_relaxation_step": 0.0,
+                "max_pairwise_overlap_ratio_fallback": 1.0,
                 "max_previous_overlap_ratio": 1.0,
                 "scale": None,
             }
@@ -1161,6 +1163,10 @@ def _normalize_target_groups(
             )
         )
         max_overlap = float(group.get("max_pairwise_overlap_ratio", 1.0))
+        overlap_relaxation_step = float(group.get("overlap_relaxation_step", 0.0))
+        max_overlap_fallback = float(
+            group.get("max_pairwise_overlap_ratio_fallback", max_overlap)
+        )
         max_previous_overlap = float(group.get("max_previous_overlap_ratio", 1.0))
         raw_scale = group.get("scale")
         if raw_scale is None:
@@ -1227,6 +1233,17 @@ def _normalize_target_groups(
             )
         if not 0.0 <= max_overlap <= 1.0:
             raise ValueError("max_pairwise_overlap_ratio must be within [0, 1]")
+        if not 0.0 <= overlap_relaxation_step <= 1.0:
+            raise ValueError("overlap_relaxation_step must be within [0, 1]")
+        if not max_overlap <= max_overlap_fallback <= 1.0:
+            raise ValueError(
+                "max_pairwise_overlap_ratio_fallback must be within "
+                "[max_pairwise_overlap_ratio, 1]"
+            )
+        if max_overlap_fallback > max_overlap and overlap_relaxation_step <= 0.0:
+            raise ValueError(
+                "overlap_relaxation_step must be positive when an overlap fallback is configured"
+            )
         if not 0.0 <= max_previous_overlap <= 1.0:
             raise ValueError("max_previous_overlap_ratio must be within [0, 1]")
         normalized.append(
@@ -1240,6 +1257,8 @@ def _normalize_target_groups(
                 "min_per_group": min_per_group,
                 "remainder_allocation": remainder_allocation,
                 "max_pairwise_overlap_ratio": max_overlap,
+                "overlap_relaxation_step": overlap_relaxation_step,
+                "max_pairwise_overlap_ratio_fallback": max_overlap_fallback,
                 "max_previous_overlap_ratio": max_previous_overlap,
                 "scale": scale,
             }
@@ -1515,45 +1534,55 @@ def sample_multiblock_graph_masks(
                 group_target_size = group["target_size"]
                 for _ in range(group["count"]):
                     accepted_target = None
-                    for _ in range(max_resample_attempts):
-                        candidate = _sample_region(
-                            graph,
-                            group_target_size,
-                            group["strategy"],
-                            group["growth"],
-                            generator,
-                            adjacency,
-                            eligible_by_size.get(group_target_size),
-                            group["farthest_quantile"],
-                            group["lobe_size_ratio"],
-                            group["min_lobe_tokens"],
-                            (
-                                batched_node_group_ids[sample_id]
-                                if batched_node_group_ids is not None
-                                else None
-                            ),
-                            group["min_per_group"],
-                            group["remainder_allocation"],
-                            stratified_plans.get(group_id),
+                    max_overlap = group["max_pairwise_overlap_ratio"]
+                    fallback_overlap = group["max_pairwise_overlap_ratio_fallback"]
+                    relaxation_step = group["overlap_relaxation_step"]
+                    overlap_thresholds = [max_overlap]
+                    while overlap_thresholds[-1] < fallback_overlap:
+                        overlap_thresholds.append(
+                            min(fallback_overlap, overlap_thresholds[-1] + relaxation_step)
                         )
-                        max_overlap = group["max_pairwise_overlap_ratio"]
-                        pairwise_overlap_valid = max_overlap >= 1.0 or all(
-                            torch.isin(candidate, previous).sum().item()
-                            / float(candidate.numel())
-                            <= max_overlap
-                            for previous in group_targets
-                        )
-                        previous_overlap_valid = (
-                            group["max_previous_overlap_ratio"] >= 1.0
-                            or all(
+                    for effective_max_overlap in overlap_thresholds:
+                        for _ in range(max_resample_attempts):
+                            candidate = _sample_region(
+                                graph,
+                                group_target_size,
+                                group["strategy"],
+                                group["growth"],
+                                generator,
+                                adjacency,
+                                eligible_by_size.get(group_target_size),
+                                group["farthest_quantile"],
+                                group["lobe_size_ratio"],
+                                group["min_lobe_tokens"],
+                                (
+                                    batched_node_group_ids[sample_id]
+                                    if batched_node_group_ids is not None
+                                    else None
+                                ),
+                                group["min_per_group"],
+                                group["remainder_allocation"],
+                                stratified_plans.get(group_id),
+                            )
+                            pairwise_overlap_valid = effective_max_overlap >= 1.0 or all(
                                 torch.isin(candidate, previous).sum().item()
                                 / float(candidate.numel())
-                                <= group["max_previous_overlap_ratio"]
-                                for previous in targets
+                                <= effective_max_overlap
+                                for previous in group_targets
                             )
-                        )
-                        if pairwise_overlap_valid and previous_overlap_valid:
-                            accepted_target = candidate
+                            previous_overlap_valid = (
+                                group["max_previous_overlap_ratio"] >= 1.0
+                                or all(
+                                    torch.isin(candidate, previous).sum().item()
+                                    / float(candidate.numel())
+                                    <= group["max_previous_overlap_ratio"]
+                                    for previous in targets
+                                )
+                            )
+                            if pairwise_overlap_valid and previous_overlap_valid:
+                                accepted_target = candidate
+                                break
+                        if accepted_target is not None:
                             break
                     if accepted_target is None:
                         targets_valid = False

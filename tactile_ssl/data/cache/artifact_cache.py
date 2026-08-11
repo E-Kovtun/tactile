@@ -12,6 +12,7 @@ import numpy as np
 import yaml
 
 from tactile_ssl.data.cache.fingerprint import producer_fingerprint, stable_hash
+from tactile_ssl.data.cache.ram_client import load_artifact_from_daemon
 from tactile_ssl.data.cache.spec import CacheSpec
 
 
@@ -57,6 +58,9 @@ class ArtifactCache:
         return self.root / "locks" / artifact / f"{key}.lock"
 
     def _load_artifact(self, npz_path: Path) -> dict[str, np.ndarray]:
+        daemon_artifact = load_artifact_from_daemon(npz_path)
+        if daemon_artifact is not None:
+            return daemon_artifact
         with np.load(npz_path, allow_pickle=False) as data:
             return {name: data[name] for name in data.files}
 

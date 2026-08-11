@@ -23,6 +23,74 @@ from .layers import PatchEmbed1d
 log = get_pylogger(__name__)
 
 
+class AxisSeparatedPatchEmbed(nn.Module):
+    """Embed a three-axis temporal window without mixing axes initially."""
+
+    def __init__(
+        self,
+        sequence_length: int,
+        embed_dim: int = 192,
+        axis_embed_dim: int = 64,
+    ) -> None:
+        super().__init__()
+        if embed_dim != 3 * axis_embed_dim:
+            raise ValueError(
+                "Axis-separated embedding requires "
+                "embed_dim == 3 * axis_embed_dim"
+            )
+        self.sequence_length = int(sequence_length)
+        self.axis_projections = nn.ModuleList(
+            nn.Linear(self.sequence_length, axis_embed_dim) for _ in range(3)
+        )
+        self.activation = nn.GELU()
+        self.output_projection = nn.Linear(embed_dim, embed_dim)
+        self.output_norm = nn.LayerNorm(embed_dim, eps=1e-6)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 3 or x.shape[1:] != (3, self.sequence_length):
+            raise ValueError(
+                "AxisSeparatedPatchEmbed expects [batch, 3, sequence_length], "
+                f"got {tuple(x.shape)}"
+            )
+        axes = [
+            self.activation(projection(x[:, axis_index, :]))
+            for axis_index, projection in enumerate(self.axis_projections)
+        ]
+        embedding = self.output_projection(torch.cat(axes, dim=-1))
+        embedding = self.output_norm(embedding)
+        return embedding.unsqueeze(-1)
+
+
+class LSTMPatchEmbed(nn.Module):
+    """Represent a three-axis temporal window by the final LSTM output."""
+
+    def __init__(self, sequence_length: int, embed_dim: int = 192) -> None:
+        super().__init__()
+        self.sequence_length = int(sequence_length)
+        self.lstm = nn.LSTM(
+            input_size=3,
+            hidden_size=embed_dim,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=False,
+            dropout=0.0,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 3 or x.shape[1:] != (3, self.sequence_length):
+            raise ValueError(
+                "LSTMPatchEmbed expects [batch, 3, sequence_length], "
+                f"got {tuple(x.shape)}"
+            )
+        sequence = x.transpose(1, 2).contiguous()
+        # deepcopy (target encoder) and DDP can invalidate cuDNN's packed RNN
+        # weights. The check is cheap when they are already packed and avoids
+        # repacking them on every sensor-window forward otherwise.
+        self.lstm.flatten_parameters()
+        output, _ = self.lstm(sequence)
+        return output[:, -1, :].unsqueeze(-1)
+
+
 class XelaTransformer(SignalTransformer):
     def __init__(
         self,
@@ -52,6 +120,8 @@ class XelaTransformer(SignalTransformer):
         use_taxel_type_embedding: bool = True,
         input_fusion: Literal[
             "joint",
+            "axis_separated",
+            "lstm",
             "separate_coordinates",
             "fresh_random",
             "coordinates_only_patch",
@@ -73,6 +143,8 @@ class XelaTransformer(SignalTransformer):
         self.random_embedding_std = float(random_embedding_std)
         supported_input_fusions = {
             "joint",
+            "axis_separated",
+            "lstm",
             "separate_coordinates",
             "fresh_random",
             "coordinates_only_patch",
@@ -92,6 +164,17 @@ class XelaTransformer(SignalTransformer):
             )
         if self.random_embedding_std <= 0:
             raise ValueError("random_embedding_std must be positive")
+        if self.input_fusion in {"axis_separated", "lstm"}:
+            if self.in_chans != 3:
+                raise ValueError(
+                    f"{self.input_fusion} requires exactly three input channels"
+                )
+            if self.sequence_length != self.time_chunk_size:
+                raise ValueError(
+                    f"{self.input_fusion} requires one full-window temporal chunk"
+                )
+            if embed_dim != 192:
+                raise ValueError(f"{self.input_fusion} requires embed_dim=192")
 
         super().__init__(
             in_dim=in_dim,
@@ -146,13 +229,24 @@ class XelaTransformer(SignalTransformer):
         patch_chunk_size = (
             1 if self.input_fusion == "coordinates_only_mean_patch" else self.time_chunk_size
         )
-        self.patch_embed = PatchEmbed1d(
-            modal_chans=patch_embed_chans,
-            modal_lens=patch_modal_lens,
-            chunk_size=patch_chunk_size,
-            embed_dim=self.embed_dim,
-            padding=0 if self.input_fusion == "coordinates_only_mean_patch" else 2,
-        )
+        if self.input_fusion == "axis_separated":
+            self.patch_embed = AxisSeparatedPatchEmbed(
+                sequence_length=sequence_length,
+                embed_dim=self.embed_dim,
+            )
+        elif self.input_fusion == "lstm":
+            self.patch_embed = LSTMPatchEmbed(
+                sequence_length=sequence_length,
+                embed_dim=self.embed_dim,
+            )
+        else:
+            self.patch_embed = PatchEmbed1d(
+                modal_chans=patch_embed_chans,
+                modal_lens=patch_modal_lens,
+                chunk_size=patch_chunk_size,
+                embed_dim=self.embed_dim,
+                padding=0 if self.input_fusion == "coordinates_only_mean_patch" else 2,
+            )
         if self.input_fusion == "separate_coordinates":
             self.coordinate_patch_embed = PatchEmbed1d(
                 modal_chans=self.coordinate_chans,
@@ -279,6 +373,7 @@ class XelaTransformer(SignalTransformer):
 
         if self.use_taxel_type_embedding:
             # We add a learnable embedding to identify different types of xela taxels
+            taxeltype_chunks = []
             prev_idx = 0
             for k, v in XELA_FLATTEN_ORDER.items():
                 if "4x4" in k:
@@ -289,8 +384,12 @@ class XelaTransformer(SignalTransformer):
                     taxeltype_embed = self.taxeltype_embed[2]
                 else:
                     raise ValueError("Bad taxel type")
-                sensor_embed[..., prev_idx : prev_idx + v, :] += taxeltype_embed[None, None, :]
+                taxeltype_chunks.append(
+                    taxeltype_embed.reshape(1, 1, 1, -1).expand(1, 1, v, -1)
+                )
                 prev_idx += v
+            taxeltype_map = torch.cat(taxeltype_chunks, dim=2)
+            sensor_embed = sensor_embed + taxeltype_map
         return sensor_embed
 
     def create_causal_mask(self, x):

@@ -389,8 +389,11 @@ class XelaRelativePoseSpatialAttentionDecoder(XelaRelativePoseDecoder):
 
 
 class XelaRelativePoseModule(SLModule):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, encoder_window_batch_size: int = 64, **kwargs):
         super().__init__(*args, **kwargs)
+        if encoder_window_batch_size <= 0:
+            raise ValueError("encoder_window_batch_size must be positive")
+        self.encoder_window_batch_size = int(encoder_window_batch_size)
         self.sequence_length, self.time_chunk_size = (
             self.model_encoder.sequence_length,
             self.model_encoder.time_chunk_size,
@@ -425,6 +428,37 @@ class XelaRelativePoseModule(SLModule):
         if graph_info is not None and getattr(self.model_encoder, "supports_graph_info", False):
             return self.model_encoder.forward_features(sensor_data, graph_info=graph_info)
         return self.model_encoder.forward_features(sensor_data)
+
+    def _forward_encoder_patchtokens(self, sensor_data, graph_info=None):
+        """Encode long pose windows without one enormous cuDNN LSTM batch.
+
+        A pose sample contains 100 encoder windows. With the downstream batch
+        size of 64, flattening time produces 6,400 windows, or 2.35 million
+        sensor sequences for the shared LSTM. cuDNN then requests hundreds of
+        GiB of workspace. The encoder is frozen for these probes, so splitting
+        that flattened dimension is numerically equivalent in eval mode.
+        """
+        use_chunking = (
+            getattr(self.model_encoder, "input_fusion", None) == "lstm"
+            and sensor_data.shape[0] > self.encoder_window_batch_size
+        )
+        if not use_chunking:
+            return self._forward_encoder(sensor_data, graph_info=graph_info)[
+                "x_norm_patchtokens"
+            ]
+
+        if graph_info is not None and getattr(self.model_encoder, "supports_graph_info", False):
+            raise ValueError(
+                "Chunked LSTM pose encoding does not support graph-aware encoders"
+            )
+
+        patchtokens = []
+        for start in range(0, sensor_data.shape[0], self.encoder_window_batch_size):
+            stop = min(start + self.encoder_window_batch_size, sensor_data.shape[0])
+            patchtokens.append(
+                self._forward_encoder(sensor_data[start:stop])["x_norm_patchtokens"]
+            )
+        return torch.cat(patchtokens, dim=0)
 
     def on_fit_start(self, train_dataloader=None, val_dataloader=None, trainer_instance=None):
         self.init_stats(train_dataloader, trainer_instance.fabric.device)
@@ -462,7 +496,7 @@ class XelaRelativePoseModule(SLModule):
 
         graph_info = self._graph_to_device(batch.get("graph"), sensor_data.device, repeats=chunked_time)
         sensor_data = einops.rearrange(sensor_data, "b (l k) n c -> (b l) k n c", k=self.sequence_length)
-        z = self._forward_encoder(sensor_data, graph_info=graph_info)["x_norm_patchtokens"]  # pyright: ignore[reportCallIssue]
+        z = self._forward_encoder_patchtokens(sensor_data, graph_info=graph_info)
         z = F.layer_norm(z, (z.shape[-1],))
         z = einops.rearrange(z, "(b l) n c -> b l n c", l=chunked_time)
 
