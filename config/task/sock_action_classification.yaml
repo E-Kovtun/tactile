@@ -1,0 +1,51 @@
+# @package _global_
+task_name: sock_action_classification
+seed: 42
+ssl_model_size: tiny
+ssl_name: jepa_graph
+experiment_name: ${task_name}_${ssl_name}
+run_name: temporal_9x5
+checkpoint_encoder: ???
+ckpt_path: null
+
+trainer:
+  devices: 4
+  max_epochs: 100
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+
+task:
+  _target_: tactile_ssl.downstream_task.sock.SockActionSLModule
+  checkpoint_task: null
+  model_encoder:
+    _target_: tactile_ssl.model.sock_${ssl_model_size}
+    in_dim: 453
+    in_chans: 1
+    sequence_length: 5
+    time_chunk_size: 5
+    num_register_tokens: 0
+    pos_embed_fn: learned
+    with_masktoken: false
+    normalization: ${data.normalization}
+    causal: false
+  model_task:
+    _target_: tactile_ssl.downstream_task.sock.SockTemporalClassifier
+    input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    classes: ${data.object_classes}
+    class_weights: ${data.object_class_weights}
+    num_heads: 3
+    temporal_depth: 2
+    max_windows: 9
+  checkpoint_encoder: ${checkpoint_encoder}
+  train_encoder: false
+  encoder_type: jepa
+  encoder_normalization_float32: true
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.AdamW
+    lr: 1e-4
+    weight_decay: 0.05
+  scheduler_cfg: null

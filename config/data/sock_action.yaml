@@ -1,0 +1,37 @@
+sensor: sock
+
+dataset:
+  _target_: tactile_ssl.data.sock.create_sock_action_datasets
+  root: /workspace-SR004.nfs2/konovalov/sock_dataset
+  window_size: 45
+  stride: 2
+  split_seed: ${seed}
+  val_recording_ratio: 0.15
+  test_recording_ratio: 0.15
+  max_train_per_class: 4000
+  include_grids: false
+  normalization_samples: 4096
+
+normalization:
+  mean: null
+  std: null
+object_classes: null
+object_class_weights: null
+
+train_dataloader:
+  batch_size: 16
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+
+val_dataloader: &eval_loader
+  batch_size: 16
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true
+
+test_dataloader: *eval_loader

@@ -133,6 +133,11 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
         train_dset = data.ConcatDataset(train_datasets)
         val_dset = data.ConcatDataset(val_datasets)
 
+    elif data_cfg.sensor == "sock":
+        train_dset, val_dset = hydra.utils.instantiate(data_cfg.dataset)
+        with open_dict(cfg):
+            cfg.data.normalization.mean = train_dset.input_mean.tolist()
+            cfg.data.normalization.std = train_dset.input_std.tolist()
     elif data_cfg.sensor == "tdex":
         dataset = hydra.utils.instantiate(data_cfg.dataset)
         train_dset_size = int(len(dataset) * cfg.data.train_val_split)
@@ -243,7 +248,7 @@ def get_dataloaders_d360_based(cfg: DictConfig):
 def get_dataloaders(cfg: DictConfig):
     if "d360" in cfg.data.sensor:
         train_dset, val_dset = get_dataloaders_d360_based(cfg)
-    elif cfg.data.sensor in ["xela", "tdex"]:
+    elif cfg.data.sensor in ["xela", "sock", "tdex"]:
         train_dset, val_dset = get_dataloaders_magnetic_based(cfg)
     else:
         raise NotImplementedError(f"Sensor type {cfg.data.sensor} is not supported.")

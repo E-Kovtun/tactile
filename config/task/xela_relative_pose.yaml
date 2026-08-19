@@ -62,6 +62,10 @@ data:
 task:
   _target_: tactile_ssl.downstream_task.xela_relativepose.XelaRelativePoseModule
   checkpoint_task: ~
+  # A pose batch flattens 100 temporal windows per sample before the frozen
+  # encoder. Chunk 512 keeps cuDNN LSTM workspace below A100-80GB capacity
+  # while avoiding the 100 serial encoder calls caused by the old chunk 64.
+  encoder_window_batch_size: 512
 
   # model_encoder:
   #   _target_: tactile_ssl.model.xela_${ssl_model_size}

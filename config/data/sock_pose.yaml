@@ -1,0 +1,30 @@
+sensor: sock
+
+dataset:
+  _target_: tactile_ssl.data.sock.create_sock_pose_datasets
+  root: /workspace-SR004.nfs2/konovalov/sock_dataset
+  mode: jepa
+  stride: 1
+  normalization_samples: 4096
+
+normalization:
+  mean: null
+  std: null
+
+train_dataloader:
+  batch_size: 32
+  num_workers: 4
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+
+val_dataloader: &eval_loader
+  batch_size: 32
+  num_workers: 2
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true
+
+test_dataloader: *eval_loader

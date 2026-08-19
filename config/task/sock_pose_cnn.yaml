@@ -1,0 +1,34 @@
+# @package _global_
+task_name: sock_pose_official_cnn
+seed: 42
+experiment_name: ${task_name}
+run_name: centered_frame30
+ckpt_path: null
+
+trainer:
+  devices: 1
+  max_epochs: 500
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+
+task:
+  _target_: tactile_ssl.downstream_task.sock.SockPoseCNNModule
+  checkpoint_task: null
+  model_encoder:
+    _target_: tactile_ssl.downstream_task.sock.SockBaselineIdentity
+  model_task:
+    _target_: tactile_ssl.downstream_task.sock.SockPoseCNN
+    window_size: 60
+    n_outputs: 69
+  checkpoint_encoder: null
+  train_encoder: false
+  encoder_type: baseline
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.Adam
+    lr: 1e-3
+    weight_decay: 1e-4
+  scheduler_cfg: null

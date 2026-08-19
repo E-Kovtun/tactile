@@ -9,6 +9,7 @@ from .xela_linear import XelaLinear
 from .xela_gat import XelaGAT
 from .xela_spatial_gnn import XelaSpatialGNNTransformer
 from .xela_spatial_wl_dino import XelaSpatialWLDINOTransformer
+from .sock_transformer import SockTransformer, sock_tiny, sock_small, sock_base
 
 
 VIT_EMBED_DIMS = {

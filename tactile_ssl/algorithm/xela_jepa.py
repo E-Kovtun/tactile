@@ -376,7 +376,7 @@ class XelaJEPAModule(Module, nn.Module):
                 context_patch_tokens,
                 context_masks=context_masks,
                 masks=mask_group,
-                context_pos_embed=self.target_encoder.pos_embed,
+                context_pos_embed=self.target_encoder.get_position_embedding(xs.device),
             )
             predictor_out = torch.cat(predictor_out, dim=0)
             predictor_out = einops.rearrange(

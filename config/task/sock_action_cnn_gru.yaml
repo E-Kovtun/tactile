@@ -1,0 +1,34 @@
+# @package _global_
+task_name: sock_action_cnn_gru
+seed: 42
+experiment_name: ${task_name}
+run_name: official_window
+ckpt_path: null
+
+trainer:
+  devices: 1
+  max_epochs: 100
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+
+task:
+  _target_: tactile_ssl.downstream_task.sock.SockActionCNNGRUModule
+  checkpoint_task: null
+  model_encoder:
+    _target_: tactile_ssl.downstream_task.sock.SockBaselineIdentity
+  model_task:
+    _target_: tactile_ssl.downstream_task.sock.SockCNNGRU
+    classes: ${data.object_classes}
+    class_weights: null
+  checkpoint_encoder: null
+  train_encoder: false
+  encoder_type: baseline
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.Adam
+    lr: 1e-3
+    weight_decay: 1e-4
+  scheduler_cfg: null

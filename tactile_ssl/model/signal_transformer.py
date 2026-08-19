@@ -145,6 +145,18 @@ class SignalTransformer(nn.Module):
             nn.init.trunc_normal_(self.mask_token, std=0.02)
         self.apply(init_weights_vit_timm)
 
+    def get_position_embedding(self, device: torch.device) -> torch.Tensor:
+        """Return positional tokens as ``[1, time_chunks * sensors, dim]``.
+
+        Sensor-specific encoders can extend this with structural embeddings
+        without changing the generic token preparation or JEPA predictor.
+        """
+        if self.pos_embed_fn == "sinusoidal":
+            return self.pos_embed(device).float().unsqueeze(0)
+        if self.pos_embed_fn == "learned":
+            return self.pos_embed.float()
+        raise NotImplementedError("Unknown position embedding function")
+
     def apply_tubelet_masks(self, x, masks, concat=True):
         all_x = []
         _, t, _, c = x.shape
@@ -203,12 +215,7 @@ class SignalTransformer(nn.Module):
             f"Input sequence length {t} is greater than model sequence length {self.sequence_length}"
         )
 
-        if self.pos_embed_fn == "sinusoidal":
-            pos_embed = self.pos_embed(x.device).float().unsqueeze(0)
-        elif self.pos_embed_fn == "learned":
-            pos_embed = self.pos_embed.float()
-        else:
-            raise NotImplementedError("Unknown position embeding function")
+        pos_embed = self.get_position_embedding(x.device)
 
         pos_embed = einops.rearrange(pos_embed, "1 (t n) c -> 1 t n c", n=n)
         x = x + pos_embed[:, :t]

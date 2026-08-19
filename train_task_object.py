@@ -135,6 +135,17 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
         val_dset = data.ConcatDataset(val_datasets)
         test_dset = data.ConcatDataset(test_datasets)
 
+    elif data_cfg.sensor == "sock":
+        train_dset, val_dset, test_dset = hydra.utils.instantiate(data_cfg.dataset)
+        with open_dict(cfg):
+            cfg.data.normalization.mean = train_dset.input_mean.tolist()
+            cfg.data.normalization.std = train_dset.input_std.tolist()
+            cfg.data.object_classes = list(train_dset.classes)
+            cfg.data.object_class_weights = train_dset.class_weights.tolist()
+
+    else:
+        raise NotImplementedError(f"Sensor type {data_cfg.sensor} is not supported")
+
     return train_dset, val_dset, test_dset
 
 

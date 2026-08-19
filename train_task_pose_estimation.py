@@ -43,6 +43,11 @@ def get_pose_estimation_dataloader_xela(cfg: DictConfig):
     data_cfg = cfg.data
     train_dset, val_dset, test_dset = hydra.utils.instantiate(data_cfg.dataset)
 
+    if data_cfg.get("sensor") == "sock":
+        with open_dict(cfg):
+            cfg.data.normalization.mean = train_dset.input_mean.tolist()
+            cfg.data.normalization.std = train_dset.input_std.tolist()
+
     if hasattr(data_cfg, "max_train_data"):
         train_dset_size = min(len(train_dset), data_cfg.max_train_data)
         train_dset, _ = data.random_split(train_dset, [train_dset_size, len(train_dset) - train_dset_size])
