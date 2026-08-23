@@ -7,7 +7,7 @@
 
 
 from functools import partial
-from typing import Callable, Optional, List, Literal
+from typing import Callable, Optional, List, Literal, Union
 from omegaconf import DictConfig
 
 import einops
@@ -130,6 +130,7 @@ class XelaTransformer(SignalTransformer):
         signal_chans: int = 3,
         coordinate_chans: int = 3,
         random_embedding_std: float = 1.0,
+        temporal_patch_padding: Union[int, Literal["auto"]] = "auto",
     ):
         self.in_dim: int = in_dim
         self.in_chans: int = in_chans
@@ -141,6 +142,12 @@ class XelaTransformer(SignalTransformer):
         self.signal_chans = int(signal_chans)
         self.coordinate_chans = int(coordinate_chans)
         self.random_embedding_std = float(random_embedding_std)
+        self.temporal_patch_padding_mode = temporal_patch_padding
+        self.temporal_patch_padding = (
+            0
+            if temporal_patch_padding == "auto"
+            else int(temporal_patch_padding)
+        )
         supported_input_fusions = {
             "joint",
             "axis_separated",
@@ -164,6 +171,10 @@ class XelaTransformer(SignalTransformer):
             )
         if self.random_embedding_std <= 0:
             raise ValueError("random_embedding_std must be positive")
+        if self.temporal_patch_padding not in {0, 2}:
+            raise ValueError(
+                "temporal_patch_padding must be 'auto', 0, or 2"
+            )
         if self.input_fusion in {"axis_separated", "lstm"}:
             if self.in_chans != 3:
                 raise ValueError(
@@ -198,6 +209,17 @@ class XelaTransformer(SignalTransformer):
             drop_path_uniform=drop_path_uniform,
             with_masktoken=with_masktoken,
             causal=causal,
+        )
+        # Version 0 is the historical padding=2 behavior. New models start at
+        # version 1 (padding=0); old checkpoints have no marker and are treated
+        # as version 0 while loading.
+        self.register_buffer(
+            "_temporal_patch_version",
+            torch.tensor(
+                1 if self.temporal_patch_padding == 0 else 0,
+                dtype=torch.int8,
+            ),
+            persistent=True,
         )
 
         if normalization is not None:
@@ -245,7 +267,14 @@ class XelaTransformer(SignalTransformer):
                 modal_lens=patch_modal_lens,
                 chunk_size=patch_chunk_size,
                 embed_dim=self.embed_dim,
-                padding=0 if self.input_fusion == "coordinates_only_mean_patch" else 2,
+                # Temporal patches are non-overlapping. Padding would shift the
+                # receptive field and leave trailing samples unused whenever a
+                # sequence is exactly divisible by the chunk size.
+                padding=(
+                    0
+                    if self.input_fusion == "coordinates_only_mean_patch"
+                    else self.temporal_patch_padding
+                ),
             )
         if self.input_fusion == "separate_coordinates":
             self.coordinate_patch_embed = PatchEmbed1d(
@@ -253,6 +282,7 @@ class XelaTransformer(SignalTransformer):
                 modal_lens=sequence_length,
                 chunk_size=self.time_chunk_size,
                 embed_dim=self.embed_dim,
+                padding=self.temporal_patch_padding,
             )
         else:
             self.coordinate_patch_embed = None
@@ -280,6 +310,61 @@ class XelaTransformer(SignalTransformer):
         assert xela_mean.shape[-1] == xela_std.shape[-1] == 3
         self.xela_mean = xela_mean
         self.xela_std = xela_std
+
+    def _set_temporal_patch_padding(self, padding: int) -> None:
+        """Apply a resolved padding mode after checkpoint-version detection."""
+        self.temporal_patch_padding = int(padding)
+        main_padding = (
+            0
+            if self.input_fusion == "coordinates_only_mean_patch"
+            else self.temporal_patch_padding
+        )
+        if isinstance(self.patch_embed, PatchEmbed1d):
+            self.patch_embed.proj.padding = (main_padding,)
+        if isinstance(self.coordinate_patch_embed, PatchEmbed1d):
+            self.coordinate_patch_embed.proj.padding = (
+                self.temporal_patch_padding,
+            )
+        self._temporal_patch_version.fill_(
+            1 if self.temporal_patch_padding == 0 else 0
+        )
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        marker_key = prefix + "_temporal_patch_version"
+        marker = state_dict.get(marker_key)
+        if self.temporal_patch_padding_mode == "auto":
+            # Checkpoints created before the padding fix have no marker.
+            checkpoint_version = 0 if marker is None else int(marker.item())
+            self._set_temporal_patch_padding(
+                0 if checkpoint_version >= 1 else 2
+            )
+        else:
+            # An explicit config value always wins over checkpoint metadata.
+            self._set_temporal_patch_padding(
+                int(self.temporal_patch_padding_mode)
+            )
+
+        # Keep strict=True compatible with old checkpoints and make an
+        # explicitly configured override persist if the model is saved again.
+        state_dict[marker_key] = self._temporal_patch_version.detach().clone()
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
 
     def normalize(self, x: torch.Tensor):
         if hasattr(self, "xela_mean") and hasattr(self, "xela_std"):

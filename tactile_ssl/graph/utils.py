@@ -90,7 +90,10 @@ PHYSICAL_BRIDGE_LINK_PAIRS = (
     ("2aftc_palm_link", "link_10_4x4_palm_link"),
     ("link_10_4x4_palm_link", "link_9A_4x4_palm_link"),
     ("link_9A_4x4_palm_link", "link_9B_4x4_palm_link"),
-    ("link_9B_4x4_palm_link", "ahr_palm_3_4x6_palm_link"),
+    # URDF coordinates place the ring-finger pad closest to palm-1.  Keeping
+    # this bridge on palm-3 creates a visibly long, anatomically implausible
+    # jump to the middle of the palm.
+    ("link_9B_4x4_palm_link", "ahr_palm_1_4x6_palm_link"),
     ("ahr_palm_1_4x6_palm_link", "ahr_palm_2_4x6_palm_link"),
     ("ahr_palm_2_4x6_palm_link", "ahr_palm_3_4x6_palm_link"),
 )

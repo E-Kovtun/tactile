@@ -21,6 +21,27 @@ import torch.utils
 logger = getLogger()
 
 
+def flattened_mask_indices(mask: torch.Tensor) -> torch.Tensor:
+    """Return flat token indices selected by an arbitrary boolean mask."""
+    if mask.dtype != torch.bool:
+        raise TypeError(f"Expected a boolean mask, got {mask.dtype}")
+    return torch.nonzero(mask.reshape(-1), as_tuple=False).flatten()
+
+
+def split_crop_major_batch(
+    tensor: torch.Tensor,
+    num_crops: int,
+) -> tuple[torch.Tensor, ...]:
+    """Split a crop-major ``[num_crops * batch, ...]`` tensor by crop."""
+    if num_crops <= 0:
+        raise ValueError("num_crops must be positive")
+    if tensor.shape[0] % num_crops:
+        raise ValueError(
+            f"Leading dimension {tensor.shape[0]} is not divisible by {num_crops} crops"
+        )
+    return tensor.chunk(num_crops, dim=0)
+
+
 class MultiMaskWrapper(nn.Module):
     def __init__(self, backbone):
         super().__init__()

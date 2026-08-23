@@ -17,6 +17,7 @@ from tactile_ssl.loss.koleo_loss import KoLeoLoss
 from tactile_ssl.utils.ema import update_moving_average
 from tactile_ssl.utils.logging import get_pylogger, img_logger
 from tactile_ssl.utils import patchify_image, patches_to_image
+from tactile_ssl.utils.masking import flattened_mask_indices, split_crop_major_batch
 
 from xformers.ops import fmha
 
@@ -305,8 +306,7 @@ class DINOv2Module(Module, nn.Module):
     def forward(self, x: torch.Tensor, global_masks: torch.Tensor, local_masks: torch.Tensor, ibot_masks: torch.Tensor):
         assert global_masks is not None and local_masks is not None, "Masks are required for DINOModule during training"
 
-        ibot_masks_flat = ibot_masks.flatten(0, 1)
-        ibot_mask_indices = torch.nonzero(ibot_masks_flat).flatten()
+        ibot_mask_indices = flattened_mask_indices(ibot_masks)
         num_ibot_tokens = len(ibot_mask_indices)
 
         student_global_dict = self.student_encoder_dict["backbone"].forward_features(
@@ -411,9 +411,14 @@ class DINOv2Module(Module, nn.Module):
             teacher_dino_softmaxed_centered_list,
         ) / (n_local_crops_loss_terms + n_global_crops_loss_terms)
 
-        # student_global_cls_tokens b x p x c
+        # Masks are concatenated crop-major by the backbone, so the leading
+        # dimension is [num_global_masks * batch]. KoLeo is computed once per
+        # crop and must retain the full embedding dimension.
         koleo_loss = self.koleo_weight * sum(
-            self.koleo_loss(p.squeeze()) for p in student_global_cls_tokens.chunk(2, dim=1)
+            self.koleo_loss(crop_tokens)
+            for crop_tokens in split_crop_major_batch(
+                student_global_cls_tokens, self.num_global_masks
+            )
         )  # we don't apply koleo loss between cls tokens of a same image
 
         ibot_loss_scale = 1.0 / self.num_global_masks

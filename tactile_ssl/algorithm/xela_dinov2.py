@@ -11,7 +11,12 @@ from xformers.ops import fmha
 from tactile_ssl.algorithm import DINOv2Module
 from tactile_ssl.data.xela.utils import xela_sensor_layout
 from tactile_ssl.utils.logging import get_pylogger
-from tactile_ssl.utils.masking import sample_block_mask, sample_block_size_1d
+from tactile_ssl.utils.masking import (
+    flattened_mask_indices,
+    sample_block_mask,
+    sample_block_size_1d,
+    split_crop_major_batch,
+)
 
 log = get_pylogger(__name__)
 
@@ -137,8 +142,7 @@ class XelaDINOv2Module(DINOv2Module):
     ):
         assert global_masks is not None and local_masks is not None, "Masks are required for DINOModule during training"
 
-        ibot_masks_flat = ibot_masks.flatten(0, 1)
-        ibot_mask_indices = torch.nonzero(ibot_masks_flat).flatten()
+        ibot_mask_indices = flattened_mask_indices(ibot_masks)
         num_ibot_tokens = len(ibot_mask_indices)
 
         # TODO: @Akash Sharma - Raise to make sure context encoder implements taking masks as an argument
@@ -281,7 +285,10 @@ class XelaDINOv2Module(DINOv2Module):
         ) / (n_local_crops_loss_terms + n_global_crops_loss_terms)
 
         koleo_loss = self.koleo_weight * sum(
-            self.koleo_loss(p.squeeze(dim=-2)) for p in student_global_cls_tokens.chunk(2, dim=1)
+            self.koleo_loss(crop_tokens)
+            for crop_tokens in split_crop_major_batch(
+                student_global_cls_tokens, self.num_global_masks
+            )
         )  # we don't apply koleo loss between cls tokens of a same image
 
         ibot_loss_scale = 1.0 / self.num_global_masks
