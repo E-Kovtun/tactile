@@ -10,7 +10,6 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
-notebooks/
 develop-eggs/
 dist/
 downloads/
@@ -26,7 +25,6 @@ pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
-pyproject.toml
 *.egg
 MANIFEST
 
@@ -132,17 +130,44 @@ dmypy.json
 .pyre/
 
 .vscode/*
-wandb/*
-slurm/*
 
-*__pycache__*
-*.log
-.log
-slurm/*
-outputs/*
-checkpoints/*
+# Generated experiment artifacts
+/outputs/
+**/outputs/
+/checkpoints/
+**/checkpoints/
+/wandb/
+**/wandb/
+/slurm/
+**/slurm/
+**/.hydra/
+**/tensorboard/
+**/tensorboard-evaluation/
+events.out.tfevents.*
+*.ckpt
+*.exit
 
+# Repository-local experiment and data roots
+/experiments/
+/experiments_*/
+/final_experiments_*/
+/datasets/
+/reports/
+/tmp/
+/sparsh-skin-dataset/
+
+# Local tools, caches, and recovery state
+/.cache/
+/.codex_pending/
+/.overlap20_sync/
+/.tmp_*/
+/notebooks/.result_visualization_test_deps/
+/diagnostics/outputs/
 config/data/*debug.yaml
-launch/*
 
+# OS and editor metadata
 .DS_Store
+._*
+*.swp
+*.swo
+*~
