@@ -3,8 +3,8 @@ import math
 from functools import partial
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
-import random
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as data
@@ -17,7 +17,7 @@ from tactile_ssl.loss.koleo_loss import KoLeoLoss
 from tactile_ssl.utils.ema import update_moving_average
 from tactile_ssl.utils.logging import get_pylogger, img_logger
 from tactile_ssl.utils import patchify_image, patches_to_image
-from tactile_ssl.utils.masking import flattened_mask_indices, split_crop_major_batch
+from tactile_ssl.utils.masking import flattened_mask_indices, masked_token_count, split_crop_major_batch
 
 from xformers.ops import fmha
 
@@ -48,6 +48,8 @@ class DINOv2Module(Module, nn.Module):
         koleo_weight: float = 0.1,
         ibot_mask_ratio: List[float] = [0.1, 0.5],
         reconstruction_log_freq: int = 1000,
+        legacy_teacher_crop_reversal: bool = False,
+        freeze_last_layer_epochs: int = 1,
     ):
         super().__init__()
         self.optim_partial = optim_cfg
@@ -64,9 +66,14 @@ class DINOv2Module(Module, nn.Module):
         self.log_freq_img = reconstruction_log_freq
         self.koleo_weight = koleo_weight
         self.ibot_mask_ratio = ibot_mask_ratio
+        self.legacy_teacher_crop_reversal = legacy_teacher_crop_reversal
+        self.freeze_last_layer_epochs = int(freeze_last_layer_epochs)
+        if self.freeze_last_layer_epochs < 0:
+            raise ValueError("freeze_last_layer_epochs must be non-negative")
 
         self.generator = torch.Generator()
         self.step = -1
+        self._update_centers = True
 
         # Encoders
         dino_head = partial(dino_head, in_dim=encoder.embed_dim)
@@ -76,8 +83,17 @@ class DINOv2Module(Module, nn.Module):
         self.student_encoder_dict["dino_head"] = dino_head()
         self.student_encoder = nn.ModuleDict(self.student_encoder_dict)
 
-        self.teacher_encoder_dict["backbone"] = copy.deepcopy(encoder)
+        # The EMA teacher must start as an exact copy of the complete student.
+        # A separately initialized projection head gives the student random,
+        # unrelated targets until EMA catches up and can collapse low-diversity
+        # tactile inputs before that happens.
+        self.teacher_encoder_dict["backbone"] = copy.deepcopy(
+            self.student_encoder_dict["backbone"]
+        )
         self.teacher_encoder_dict["dino_head"] = dino_head()
+        self.teacher_encoder_dict["dino_head"].load_state_dict(
+            self.student_encoder_dict["dino_head"].state_dict()
+        )
         self.teacher_encoder = nn.ModuleDict(self.teacher_encoder_dict)
         self.teacher_encoder.requires_grad_(False)
 
@@ -111,6 +127,28 @@ class DINOv2Module(Module, nn.Module):
         self._schedule_step = 0
         self._schedule_total_steps = None
         self._schedule_steps_per_epoch = None
+        # Keep the parameter visible to DDP and cancel its gradient instead of
+        # toggling requires_grad after DistributedDataParallel is constructed.
+        self.student_encoder_dict["dino_head"].last_layer.weight_v.register_hook(
+            self._freeze_last_layer_gradient
+        )
+
+    def _freeze_last_layer_gradient(self, gradient: torch.Tensor) -> torch.Tensor:
+        if self._schedule_steps_per_epoch is None:
+            return gradient
+        freeze_steps = self.freeze_last_layer_epochs * self._schedule_steps_per_epoch
+        if self._schedule_step < freeze_steps:
+            return torch.zeros_like(gradient)
+        return gradient
+
+    def _sample_ibot_ratio(self) -> float:
+        low, high = self.ibot_mask_ratio
+        return low + torch.rand((), generator=self.generator).item() * (high - low)
+
+    def _seed_mask_generator(self) -> None:
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        self.generator.manual_seed(self.step * world_size + rank)
 
     def log_on_batch_end(self, outputs, stage: Literal["train", "val"] = "train", trainer_instance=None):
         loss = outputs["loss"]
@@ -145,6 +183,22 @@ class DINOv2Module(Module, nn.Module):
                 )
 
             trainer_instance.writer.add_scalar(f"{stage}/teacher_temperature", self.current_teacher_temp, step)
+            for name in ("dino_loss", "ibot_loss", "koleo_loss"):
+                value = outputs.get(name)
+                if isinstance(value, torch.Tensor):
+                    value = value.detach().item()
+                if isinstance(value, (int, float)):
+                    trainer_instance.writer.add_scalar(f"{stage}/{name}", value, step)
+            trainer_instance.writer.add_scalar(
+                f"{stage}/dino_center_std", self.dino_loss.center.float().std(), step
+            )
+            trainer_instance.writer.add_scalar(
+                f"{stage}/ibot_center_std", self.ibot_patch_loss.center.float().std(), step
+            )
+            prototype_scale = self.student_encoder_dict["dino_head"].last_layer.weight_g.float()
+            trainer_instance.writer.add_scalar(
+                f"{stage}/prototype_scale_mean", prototype_scale.mean(), step
+            )
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         assert self.teacher_encoder is not None, "target encoder has not been created"
@@ -284,8 +338,10 @@ class DINOv2Module(Module, nn.Module):
             for _ in range(self.num_global_masks):
                 mask, _ = self._sample_block_mask(height, width, global_maskblock_sizes, acceptable_regions)
                 ibot_mask = torch.zeros(len(mask), dtype=torch.bool)
-                num_masked_tokens = int(random.uniform(*self.ibot_mask_ratio) * height * width)
-                ibot_mask_idx = torch.randperm(len(mask))[:num_masked_tokens]
+                num_masked_tokens = masked_token_count(len(mask), self._sample_ibot_ratio())
+                ibot_mask_idx = torch.randperm(
+                    len(mask), generator=self.generator
+                )[:num_masked_tokens]
                 ibot_mask[ibot_mask_idx] = True
                 ibot_masks.append(ibot_mask)
                 masks_encoder.append(mask)
@@ -350,11 +406,16 @@ class DINOv2Module(Module, nn.Module):
             teacher_global_dict = self.teacher_encoder_dict["backbone"].forward_features(x, global_masks)
             teacher_global_cls_tokens = teacher_global_dict["x_norm_regtokens"][:, 0]
 
-            teacher_global_cls_tokens = teacher_global_cls_tokens.chunk(self.num_global_masks)
-
-            # watch out: these are chunked and cat'd in reverse so A is matched to B in the global crops dino loss
+            # DINOLoss below is the original list-based implementation: it
+            # excludes equal student/teacher crop indices.  Keep the teacher
+            # crops in crop-major order so crop 0 is matched to crop 1 and vice
+            # versa.  Newer upstream DINOv2 reverses here only because its loss
+            # no longer performs that index exclusion.
             assert self.num_global_masks == 2, "Only 2 global masks are supported"
-            teacher_global_cls_tokens = torch.cat((teacher_global_cls_tokens[1], teacher_global_cls_tokens[0]))
+            if self.legacy_teacher_crop_reversal:
+                teacher_global_cls_tokens = torch.cat(
+                    teacher_global_cls_tokens.chunk(self.num_global_masks)[::-1]
+                )
             teacher_global_patch_tokens = teacher_global_dict["x_norm_patchtokens"].flatten(0, 1)
 
             teacher_masked_patch_tokens = teacher_global_patch_tokens.new_zeros(
@@ -379,8 +440,9 @@ class DINOv2Module(Module, nn.Module):
                     teacher_temp=self.current_teacher_temp,
                 )
                 teacher_ibot_softmaxed_centered = teacher_ibot_softmaxed_centered.squeeze(0)
-                self.dino_loss.update_center(teacher_cls_tokens_after_head)
-                self.ibot_patch_loss.update_center(teacher_masked_patch_tokens_after_head)
+                if self._update_centers:
+                    self.dino_loss.update_center(teacher_cls_tokens_after_head)
+                    self.ibot_patch_loss.update_center(teacher_masked_patch_tokens_after_head)
 
             elif self.centering == "sinkhorn_knopp":
                 teacher_dino_softmaxed_centered_list = self.dino_loss.sinkhorn_knopp_teacher(
@@ -427,11 +489,17 @@ class DINOv2Module(Module, nn.Module):
         )
         loss = dino_loss + patch_loss + koleo_loss
 
+        self._last_ssl_components = {
+            "dino_loss": dino_loss.detach(),
+            "ibot_loss": patch_loss.detach(),
+            "koleo_loss": koleo_loss.detach(),
+        }
+
         return loss
 
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
         self.step = self.step + 1
-        self.generator.manual_seed(self.step)
+        self._seed_mask_generator()
 
         x = batch["image"]
         global_masks, local_masks, ibot_masks = self.sample_masks(x)
@@ -440,6 +508,7 @@ class DINOv2Module(Module, nn.Module):
         output = {
             "ssl_loss": loss.item(),
         }
+        output.update(getattr(self, "_last_ssl_components", {}))
 
         # online probes
         if len(self.online_probes) > 0:
@@ -484,7 +553,16 @@ class DINOv2Module(Module, nn.Module):
         return output
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
-        return self.training_step(batch, batch_idx)
+        mask_step = self.step
+        generator_state = self.generator.get_state()
+        self._update_centers = False
+        try:
+            self.step = mask_step + batch_idx
+            return self.training_step(batch, batch_idx)
+        finally:
+            self.step = mask_step
+            self.generator.set_state(generator_state)
+            self._update_centers = True
 
     def configure_optimizers(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, num_iterations_per_epoch, num_epochs

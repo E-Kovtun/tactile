@@ -129,8 +129,22 @@ class iBOTPatchLoss(nn.Module):
     @torch.no_grad()
     def reduce_center_update(self, teacher_patch_tokens):
         self.updated = False
-        self.len_teacher_patch_tokens = len(teacher_patch_tokens)
-        self.async_batch_center = torch.sum(teacher_patch_tokens.mean(1), dim=0, keepdim=True)
+        if teacher_patch_tokens.ndim == 2:
+            # This repository flattens all selected patch tokens to [N, D]
+            # before the head. Preserve D (the prototype axis) when computing
+            # the batch center.
+            self.len_teacher_patch_tokens = teacher_patch_tokens.shape[0]
+            self.async_batch_center = teacher_patch_tokens.sum(dim=0, keepdim=True)
+        elif teacher_patch_tokens.ndim == 3:
+            # Compatibility with the upstream [B, N, D] contract: average
+            # patches within each sample, then average samples below.
+            self.len_teacher_patch_tokens = teacher_patch_tokens.shape[0]
+            self.async_batch_center = teacher_patch_tokens.mean(dim=1).sum(dim=0, keepdim=True)
+        else:
+            raise ValueError(
+                "teacher_patch_tokens must have shape [N, D] or [B, N, D], "
+                f"got {tuple(teacher_patch_tokens.shape)}"
+            )
         if dist.is_initialized():
             self.reduce_handle = dist.all_reduce(self.async_batch_center, async_op=True)
 

@@ -1,4 +1,3 @@
-import random
 from typing import Any, Dict, List, Optional
 
 import einops
@@ -13,6 +12,7 @@ from tactile_ssl.data.xela.utils import xela_sensor_layout
 from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.utils.masking import (
     flattened_mask_indices,
+    masked_token_count,
     sample_block_mask,
     sample_block_size_1d,
     split_crop_major_batch,
@@ -80,8 +80,12 @@ class XelaDINOv2Module(DINOv2Module):
     def sample_masks(self, x):
         batch_size, _, num_sensors, _ = x.shape
 
-        local_maskblock_sizes = sample_block_size_1d(num_sensors, self.local_mask_scale)[0]
-        global_maskblock_sizes = sample_block_size_1d(num_sensors, self.global_mask_scale)[0]
+        local_maskblock_sizes = sample_block_size_1d(
+            num_sensors, self.local_mask_scale, generator=self.generator
+        )[0]
+        global_maskblock_sizes = sample_block_size_1d(
+            num_sensors, self.global_mask_scale, generator=self.generator
+        )[0]
 
         collated_local_masks, collated_global_masks, collated_ibot_masks = [], [], []
         min_keep_local_patches, min_keep_global_patches = (num_sensors, num_sensors)
@@ -96,8 +100,10 @@ class XelaDINOv2Module(DINOv2Module):
                     generator=self.generator,
                 )
                 ibot_mask = torch.zeros(len(mask), dtype=torch.bool)
-                num_masked_tokens = int(random.uniform(*self.ibot_mask_ratio) * num_sensors)
-                ibot_mask_idx = torch.randperm(len(mask))[:num_masked_tokens]
+                num_masked_tokens = masked_token_count(len(mask), self._sample_ibot_ratio())
+                ibot_mask_idx = torch.randperm(
+                    len(mask), generator=self.generator
+                )[:num_masked_tokens]
                 ibot_mask[ibot_mask_idx] = 1
                 ibot_masks.append(ibot_mask)
                 masks_encoder.append(mask)
@@ -214,10 +220,14 @@ class XelaDINOv2Module(DINOv2Module):
             )
             teacher_global_cls_tokens = teacher_global_dict["x_norm_regtokens"][:, 0]
 
-            teacher_global_cls_tokens = teacher_global_cls_tokens.chunk(self.num_global_masks)
-            # watch out: these are chunked and cat'd in reverse so A is matched to B in the global crops dino loss
+            # The local DINOLoss excludes equal student/teacher crop indices.
+            # Preserve crop-major order so the surviving global pair is the
+            # other view.  Reversing here would make it the same crop.
             assert self.num_global_masks == 2, "Only 2 global masks are supported"
-            teacher_global_cls_tokens = torch.cat((teacher_global_cls_tokens[1], teacher_global_cls_tokens[0]))
+            if self.legacy_teacher_crop_reversal:
+                teacher_global_cls_tokens = torch.cat(
+                    teacher_global_cls_tokens.chunk(self.num_global_masks)[::-1]
+                )
 
             teacher_global_patch_tokens = teacher_global_dict["x_norm_patchtokens"]
             teacher_global_patch_tokens = einops.rearrange(
@@ -252,8 +262,9 @@ class XelaDINOv2Module(DINOv2Module):
                     teacher_temp=self.current_teacher_temp,
                 )
                 teacher_ibot_softmaxed_centered = teacher_ibot_softmaxed_centered.squeeze(0)
-                self.dino_loss.update_center(teacher_cls_tokens_after_head)
-                self.ibot_patch_loss.update_center(teacher_masked_patch_tokens_after_head)
+                if self._update_centers:
+                    self.dino_loss.update_center(teacher_cls_tokens_after_head)
+                    self.ibot_patch_loss.update_center(teacher_masked_patch_tokens_after_head)
 
             elif self.centering == "sinkhorn_knopp":
                 teacher_dino_softmaxed_centered_list = self.dino_loss.sinkhorn_knopp_teacher(
@@ -297,11 +308,17 @@ class XelaDINOv2Module(DINOv2Module):
         )
         loss = dino_loss + patch_loss + koleo_loss
 
+        self._last_ssl_components = {
+            "dino_loss": dino_loss.detach(),
+            "ibot_loss": patch_loss.detach(),
+            "koleo_loss": koleo_loss.detach(),
+        }
+
         return loss
 
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
         self.step = self.step + 1
-        self.generator.manual_seed(self.step)
+        self._seed_mask_generator()
         x = batch["sensor"]
         graph_info = self._graph_to_device(batch.get("graph"), x.device)
         global_masks, local_masks, ibot_masks = self.sample_masks(x)
@@ -311,6 +328,7 @@ class XelaDINOv2Module(DINOv2Module):
         output = {
             "ssl_loss": loss.item(),
         }
+        output.update(getattr(self, "_last_ssl_components", {}))
 
         # online probes
         embedding = None
@@ -356,4 +374,13 @@ class XelaDINOv2Module(DINOv2Module):
         return output
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
-        return self.training_step(batch, batch_idx)
+        mask_step = self.step
+        generator_state = self.generator.get_state()
+        self._update_centers = False
+        try:
+            self.step = mask_step + batch_idx
+            return self.training_step(batch, batch_idx)
+        finally:
+            self.step = mask_step
+            self.generator.set_state(generator_state)
+            self._update_centers = True

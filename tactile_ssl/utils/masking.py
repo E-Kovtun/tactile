@@ -42,6 +42,15 @@ def split_crop_major_batch(
     return tensor.chunk(num_crops, dim=0)
 
 
+def masked_token_count(num_visible_tokens: int, ratio: float) -> int:
+    """Convert an iBOT ratio into a count within the sampled view."""
+    if num_visible_tokens < 0:
+        raise ValueError("num_visible_tokens must be non-negative")
+    if not 0.0 <= ratio <= 1.0:
+        raise ValueError("mask ratio must be in [0, 1]")
+    return min(num_visible_tokens, int(ratio * num_visible_tokens))
+
+
 class MultiMaskWrapper(nn.Module):
     def __init__(self, backbone):
         super().__init__()
