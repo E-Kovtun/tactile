@@ -211,10 +211,13 @@ class SockHDFWindowDataset(Dataset):
                 recording.right_count,
                 self.stride,
             ):
-                left_start = int(recording.right_to_left[right_start])
+                right_stop = right_start + self.window_size
+                if right_stop > recording.right_count:
+                    break
+                left_indices = recording.right_to_left[right_start:right_stop]
                 if (
-                    left_start + self.window_size > recording.left_count
-                    or right_start + self.window_size > recording.right_count
+                    left_indices.size != self.window_size
+                    or int(left_indices[-1]) >= recording.left_count
                 ):
                     break
                 entries.append((recording_id, right_start))
@@ -239,10 +242,12 @@ class SockHDFWindowDataset(Dataset):
         recording_id, start = self.entries[index]
         recording = self.recordings[recording_id]
         right_indices = np.arange(start, start + self.window_size, dtype=np.int64)
-        left_start = int(recording.right_to_left[start])
-        left_indices = np.arange(
-            left_start, left_start + self.window_size, dtype=np.int64
-        )
+        # Align every right-foot frame independently. The streams contain
+        # occasional duplicate/dropped frames, so advancing the left index by
+        # one after aligning only the window start introduces temporal drift.
+        left_indices = recording.right_to_left[right_indices]
+        if int(left_indices[-1]) >= recording.left_count:
+            raise IndexError("Sock window maps beyond the left recording")
         left_grid = _read_h5_frames(
             self._file(recording.left_path)["pressure"], left_indices
         )
@@ -296,6 +301,7 @@ class SockPoseDataset(Dataset):
         include_graph: bool = False,
         drop_root_orientation: bool = True,
         centered: bool = False,
+        centered_non_overlapping: bool = False,
         arrays: Optional[Sequence[np.ndarray]] = None,
     ) -> None:
         if not 0 <= target_index < window_size:
@@ -309,6 +315,7 @@ class SockPoseDataset(Dataset):
         self.include_grids = bool(include_grids)
         self.include_graph = bool(include_graph)
         self.centered = bool(centered)
+        self.centered_non_overlapping = bool(centered_non_overlapping)
         self.sensor_mean: Optional[np.ndarray] = None
         self.sensor_std: Optional[np.ndarray] = None
         if arrays is None:
@@ -330,9 +337,27 @@ class SockPoseDataset(Dataset):
         if self.centered:
             if self.window_size % 2 or self.target_index != self.window_size // 2:
                 raise ValueError("Centered pose windows require target_index=window_size/2")
-            # The released loader returns one example per target frame. Near
-            # either boundary it reuses the first/last full temporal window.
-            self.starts = np.arange(0, common_length, self.stride, dtype=np.int64)
+            if self.centered_non_overlapping:
+                if self.stride != self.window_size:
+                    raise ValueError(
+                        "Centered non-overlap requires stride equal to window_size"
+                    )
+                # Use each full window exactly once and predict its center.
+                # Boundary-clamped windows are deliberately excluded because
+                # they would overlap the first/last regular window.
+                radius = self.window_size // 2
+                self.starts = np.arange(
+                    radius,
+                    common_length - radius + 1,
+                    self.stride,
+                    dtype=np.int64,
+                )
+            else:
+                # The released loader returns one example per target frame. Near
+                # either boundary it reuses the first/last full temporal window.
+                self.starts = np.arange(0, common_length, self.stride, dtype=np.int64)
+        elif self.centered_non_overlapping:
+            raise ValueError("centered_non_overlapping requires centered=True")
         else:
             self.starts = np.arange(
                 0,
@@ -936,6 +961,7 @@ def create_sock_pose_datasets(
     root: str,
     mode: str,
     stride: int = 1,
+    centered_non_overlapping: bool = False,
     normalization_samples: int = 4096,
     normalize_inputs: bool = False,
     normalization_mean: Optional[float] = None,
@@ -966,6 +992,7 @@ def create_sock_pose_datasets(
             include_grids=include_grids,
             include_graph=False,
             centered=centered,
+            centered_non_overlapping=centered_non_overlapping,
         )
         for split in ("train", "val", "test")
     )

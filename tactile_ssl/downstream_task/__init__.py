@@ -15,3 +15,10 @@ from .force_sl import (
 from .d360_sl import D360SLModule
 from .classification_sl import D360ClassificationSLModule
 from .xela_object import XelaObjectSLModule, XelaObjectTokenMLPClassifier
+from .deco_policy import (
+    DecoPolicyHead,
+    DecoPolicyModel,
+    DecoPolicyModule,
+    DecoSparshPolicyHead,
+    DecoSparshPolicyModule,
+)

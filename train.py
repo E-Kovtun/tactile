@@ -248,6 +248,8 @@ def get_dataloaders_d360_based(cfg: DictConfig):
 def get_dataloaders(cfg: DictConfig):
     if "d360" in cfg.data.sensor:
         train_dset, val_dset = get_dataloaders_d360_based(cfg)
+    elif cfg.data.sensor == "deco":
+        train_dset, val_dset = hydra.utils.instantiate(cfg.data.dataset)
     elif cfg.data.sensor in ["xela", "sock", "tdex"]:
         train_dset, val_dset = get_dataloaders_magnetic_based(cfg)
     else:

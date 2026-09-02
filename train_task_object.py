@@ -143,6 +143,10 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
             cfg.data.object_classes = list(train_dset.classes)
             cfg.data.object_class_weights = train_dset.class_weights.tolist()
 
+    elif data_cfg.sensor == "deco":
+        train_dset, val_dset = hydra.utils.instantiate(data_cfg.dataset)
+        test_dset = train_dset.test_dataset
+
     else:
         raise NotImplementedError(f"Sensor type {data_cfg.sensor} is not supported")
 
@@ -178,7 +182,22 @@ def train(cfg: DictConfig):
     trainer = Trainer(tb_logger=writer, **cfg.trainer)
 
     trainer.fit(model, train_dataloader, val_dataloader, ckpt_path=cfg.ckpt_path)
-    trainer.evaluate(model, test_dataloader)
+    if trainer.use_early_stopping:
+        evaluation_checkpoint = os.path.join(
+            trainer.checkpoint_dir,
+            f"{trainer.early_stopping_checkpoint_name}.ckpt",
+        )
+    else:
+        evaluation_checkpoint = trainer.get_latest_checkpoint(trainer.checkpoint_dir)
+    if evaluation_checkpoint is None or not os.path.isfile(evaluation_checkpoint):
+        raise FileNotFoundError(
+            f"No final downstream checkpoint found in {trainer.checkpoint_dir}"
+        )
+    trainer.evaluate(
+        model,
+        test_dataloader,
+        ckpt_path_to_eval=evaluation_checkpoint,
+    )
 
     writer.close()
 

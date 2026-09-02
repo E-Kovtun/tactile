@@ -123,7 +123,9 @@ class Trainer:
 
         self.global_step = 0
         self.global_val_step = 0
-        self.grad_accum_steps: int = grad_accum_steps
+        self.grad_accum_steps = int(grad_accum_steps)
+        if self.grad_accum_steps <= 0:
+            raise ValueError("grad_accum_steps must be positive")
         self.grad_clip_norm = grad_clip_norm
         self.current_epoch = 0
         self.stage: Optional[Literal["train", "val"]] = None
@@ -326,6 +328,12 @@ class Trainer:
             total=min(len(train_loader), limit_batches),
             desc=f"Epoch {self.current_epoch}",
         )
+        # Accumulation is defined in dataloader-batch units; ``global_step``
+        # counts optimizer updates and therefore cannot be used to decide when
+        # the next update is due.  Start every epoch with a clean accumulation
+        # group and discard an incomplete tail to keep the effective batch
+        # size identical across optimizer steps.
+        optimizer.zero_grad()
         start_time = time.perf_counter()
         for batch_idx, batch in enumerate(iterable):
             dataloading_time = time.perf_counter() - start_time
@@ -336,15 +344,20 @@ class Trainer:
             module.on_train_batch_start(batch, batch_idx)
             self.fabric.call("on_train_batch_start", batch, batch_idx)
 
-            # check if optimizer should step in gradient accumulation
-            should_optim_step = self.global_step % self.grad_accum_steps == 0
+            # Step after exactly ``grad_accum_steps`` microbatches.
+            should_optim_step = (batch_idx + 1) % self.grad_accum_steps == 0
             grad_norm = None
+            with self.fabric.no_backward_sync(module, enabled=not should_optim_step):
+                self.training_step(
+                    module=module,
+                    batch=batch,
+                    batch_idx=batch_idx,
+                    loss_divisor=self.grad_accum_steps,
+                )
+
             if should_optim_step:
                 # currently only supports a single optimizer
                 self.fabric.call("on_before_optimizer_step", optimizer, 0)
-
-                # optimizer step runs train step internally through closure
-                self.training_step(module=module, batch=batch, batch_idx=batch_idx)
                 if self.grad_clip_norm:
                     grad_norm = self.fabric.clip_gradients(module, optimizer, max_norm=self.grad_clip_norm)
                     if grad_norm is not None:
@@ -352,10 +365,6 @@ class Trainer:
                 optimizer.step()
                 optimizer.zero_grad()
                 self.fabric.call("on_before_zero_grad", optimizer)
-
-            else:
-                # gradient accumulation -> no optimizer step
-                self.training_step(module=module, batch=batch, batch_idx=batch_idx)
 
             module.on_train_batch_end(self._current_train_return, batch, batch_idx, self)
             self.fabric.call("on_train_batch_end", self._current_train_return, batch, batch_idx)
@@ -379,6 +388,9 @@ class Trainer:
                 self.should_stop = True
                 break
             start_time = time.perf_counter()
+
+        # Do not carry a short final accumulation group into the next epoch.
+        optimizer.zero_grad()
 
         module.on_train_epoch_end(self)
         self.fabric.call("on_train_epoch_end")
@@ -486,7 +498,13 @@ class Trainer:
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
 
-    def training_step(self, module: Module, batch: Any, batch_idx: int) -> torch.Tensor:
+    def training_step(
+        self,
+        module: Module,
+        batch: Any,
+        batch_idx: int,
+        loss_divisor: int = 1,
+    ) -> torch.Tensor:
         """A single training step, running forward and backward. The optimizer step is called separately, as this is
         given as a closure to the optimizer step.
 
@@ -500,8 +518,9 @@ class Trainer:
 
         loss = outputs if isinstance(outputs, torch.Tensor) else outputs["loss"]
 
-        self.fabric.call("on_before_backward", loss)
-        self.fabric.backward(loss)
+        backward_loss = loss / int(loss_divisor)
+        self.fabric.call("on_before_backward", backward_loss)
+        self.fabric.backward(backward_loss)
         self.fabric.call("on_after_backward")
 
         # avoid gradients in stored/accumulated values -> prevents potential OOM
@@ -564,7 +583,12 @@ class Trainer:
             if batch_idx >= limit_batches:
                 break
 
-            out = module.test_step(batch, batch_idx)
+            # Evaluation may receive cached low-precision tensors (for example
+            # DECO's BF16 ResNet features). Unlike the fitted Fabric wrapper,
+            # ``evaluate`` intentionally unwraps the task before loading its
+            # checkpoint, so make the precision context explicit here.
+            with self.fabric.autocast():
+                out = module.test_step(batch, batch_idx)
             out = apply_to_collection(out, torch.Tensor, lambda x: x.detach())
 
             module.on_test_batch_end(out, batch, batch_idx, self)
