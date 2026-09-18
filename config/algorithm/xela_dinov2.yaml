@@ -5,6 +5,7 @@ encoder:
   in_chans: 6 # 3 xela mag channels + 3 position channels
   sequence_length: 10
   time_chunk_size: 10
+  temporal_patch_padding: auto
   num_register_tokens: 1
   pos_embed_fn: learned
   with_masktoken: True

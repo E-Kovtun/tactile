@@ -6,6 +6,7 @@ encoder:
   in_chans: 1
   sequence_length: 5
   time_chunk_size: 5
+  temporal_patch_padding: auto
   num_register_tokens: 1
   pos_embed_fn: learned
   with_masktoken: true

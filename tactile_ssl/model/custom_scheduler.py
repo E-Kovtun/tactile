@@ -28,16 +28,19 @@ class WarmupCosineScheduler(LRScheduler):
 
     def get_lr(self):
         lrs = []
-        for base_lr in self.base_lrs:
+        for group, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
+            lr_scale = float(group.get("lr_scale", 1.0))
+            start_lr = self.start_lr * lr_scale
+            final_lr = self.final_lr * lr_scale
             if self._step_count < self.warmup_steps:
                 progress = float(self._step_count) / float(max(1, self.warmup_steps))
-                new_lr = self.start_lr + progress * (base_lr - self.start_lr)
+                new_lr = start_lr + progress * (base_lr - start_lr)
             else:
                 # -- progress after warmup
                 progress = float(self._step_count - self.warmup_steps) / float(max(1, self.T_max))
                 new_lr = max(
-                    self.final_lr,
-                    self.final_lr + (base_lr - self.final_lr) * 0.5 * (1.0 + math.cos(math.pi * progress)),
+                    final_lr,
+                    final_lr + (base_lr - final_lr) * 0.5 * (1.0 + math.cos(math.pi * progress)),
                 )
             lrs.append(new_lr)
         return lrs

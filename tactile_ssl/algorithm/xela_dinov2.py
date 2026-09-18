@@ -25,6 +25,10 @@ class XelaDINOv2Module(DINOv2Module):
     def __init__(
         self,
         ibot_mask_ratio: List[float] = [0.1, 0.5],
+        ibot_enabled: bool = True,
+        ibot_separate_head: bool = False,
+        collapse_diagnostics_every: int = 0,
+        schedule_epochs: Optional[int] = None,
         *args,
         **kwargs,
     ):
@@ -32,6 +36,74 @@ class XelaDINOv2Module(DINOv2Module):
         # TODO: Load this in a different way
         # This is valid only when the baseline is subtracted in the xela dataset
         self.ibot_mask_ratio = ibot_mask_ratio
+        self.ibot_enabled = ibot_enabled
+        self.ibot_separate_head = ibot_separate_head
+        if ibot_separate_head and not ibot_enabled:
+            raise ValueError("ibot_separate_head requires ibot_enabled")
+        if ibot_separate_head:
+            # Equal initial outputs isolate sharing, while parameters remain independent.
+            # Preserve RNG so backbone drop-path/data randomness matches the baseline.
+            with torch.random.fork_rng(devices=[]):
+                for mapping, modules in (
+                    (self.student_encoder_dict, self.student_encoder),
+                    (self.teacher_encoder_dict, self.teacher_encoder),
+                ):
+                    head = kwargs["dino_head"](in_dim=mapping["backbone"].embed_dim)
+                    head.load_state_dict(mapping["dino_head"].state_dict())
+                    mapping["ibot_head"] = head
+                    modules["ibot_head"] = head
+            self.teacher_encoder_dict["ibot_head"].requires_grad_(False)
+            self.student_encoder_dict["ibot_head"].last_layer.weight_v.register_hook(
+                self._freeze_last_layer_gradient
+            )
+
+        self.collapse_diagnostics_every = int(collapse_diagnostics_every)
+        self.schedule_epochs = schedule_epochs
+        if self.collapse_diagnostics_every < 0:
+            raise ValueError("collapse_diagnostics_every must be non-negative")
+        if schedule_epochs is not None and schedule_epochs <= 0:
+            raise ValueError("schedule_epochs must be positive")
+        if not ibot_enabled:
+            # Keep initialization/RNG identical, but exclude the unused token from DDP.
+            mask_token = getattr(self.student_encoder_dict["backbone"], "mask_token", None)
+            if mask_token is not None:
+                mask_token.requires_grad_(False)
+
+    def configure_optimizers(self, num_iterations_per_epoch, num_epochs):
+        result = super().configure_optimizers(
+            num_iterations_per_epoch,
+            self.schedule_epochs if self.schedule_epochs is not None else num_epochs,
+        )
+        if self.ibot_separate_head:
+            # Reuse the existing last-layer group, preserving scheduler group counts.
+            optimizer = result[0]
+            patch_last = self.student_encoder_dict["ibot_head"].last_layer.weight_v
+            cls_last = self.student_encoder_dict["dino_head"].last_layer.weight_v
+            for group in optimizer.param_groups:
+                group["params"] = [p for p in group["params"] if p is not patch_last]
+            target = next(g for g in optimizer.param_groups if any(p is cls_last for p in g["params"]))
+            target["params"].append(patch_last)
+        return result
+
+    def log_on_batch_end(self, outputs, stage="train", trainer_instance=None):
+        super().log_on_batch_end(outputs, stage, trainer_instance)
+        if trainer_instance is not None:
+            for name, value in outputs.items():
+                if name.startswith("collapse/"):
+                    trainer_instance.writer.add_scalar(f"{stage}/{name}", value, trainer_instance.step)
+
+    @torch.no_grad()
+    def _collapse_metrics(self, teacher_probs, student_logits, teacher_cls, student_cls):
+        from tactile_ssl.utils.dino_diagnostics import collapse_metrics
+        metrics = {}
+        # Use one global view: differences measure examples, not crop differences.
+        b = teacher_cls.shape[0] // self.num_global_masks
+        for name, probs, cls in (
+            ("teacher", teacher_probs.reshape(-1, teacher_probs.shape[-1])[:b], teacher_cls[:b]),
+            ("student", (student_logits[:b].float() / self.dino_loss.student_temp).softmax(-1), student_cls[:b]),
+        ):
+            metrics.update({f"collapse/{name}_{k}": v for k, v in collapse_metrics(probs, cls).items()})
+        return metrics
 
     def _graph_to_device(self, graph_info: Optional[Dict[str, torch.Tensor]], device: torch.device):
         if graph_info is None:
@@ -136,6 +208,9 @@ class XelaDINOv2Module(DINOv2Module):
         global_masks = torch.stack(data.default_collate(collated_global_masks), dim=0).to(x.device)
         ibot_masks = torch.stack(data.default_collate(collated_ibot_masks), dim=0).to(x.device)
 
+        # Still draw iBOT randomness so global/local crops match the baseline.
+        if not self.ibot_enabled:
+            ibot_masks.zero_()
         return global_masks, local_masks, ibot_masks
 
     def forward(
@@ -158,7 +233,7 @@ class XelaDINOv2Module(DINOv2Module):
             graph_info=graph_info,
             masks=global_masks,
             mask_type="tubelet",
-            masktoken_masks=ibot_masks,
+            masktoken_masks=ibot_masks if self.ibot_enabled else None,
         )
         student_local_dict = self._forward_backbone(
             self.student_encoder_dict["backbone"],
@@ -170,41 +245,58 @@ class XelaDINOv2Module(DINOv2Module):
 
         student_global_cls_tokens = student_global_dict["x_norm_regtokens"][:, 0]
         student_local_cls_tokens = student_local_dict["x_norm_regtokens"][:, 0]
-        student_global_patch_tokens = student_global_dict["x_norm_patchtokens"]
+        if self.ibot_enabled:
+            student_global_patch_tokens = student_global_dict["x_norm_patchtokens"]
 
-        # Here we ensure that we select every mask token in the time series
-        student_global_patch_tokens = einops.rearrange(
-            student_global_patch_tokens,
-            "b (t n) c -> (b n) t c",
-            n=global_masks.shape[-1],
-        )
-        student_masked_patch_tokens = student_global_patch_tokens.new_zeros(
-            (
-                num_ibot_tokens,
-                student_global_patch_tokens.shape[-2],
-                student_global_patch_tokens.shape[-1],
+            # Here we ensure that we select every mask token in the time series
+            student_global_patch_tokens = einops.rearrange(
+                student_global_patch_tokens,
+                "b (t n) c -> (b n) t c",
+                n=global_masks.shape[-1],
             )
-        )
-        student_masked_patch_tokens.copy_(student_global_patch_tokens[ibot_mask_indices])
-        student_masked_patch_tokens = student_masked_patch_tokens.flatten(0, 1)
+            student_masked_patch_tokens = student_global_patch_tokens.new_zeros(
+                (
+                    num_ibot_tokens,
+                    student_global_patch_tokens.shape[-2],
+                    student_global_patch_tokens.shape[-1],
+                )
+            )
+            student_masked_patch_tokens.copy_(student_global_patch_tokens[ibot_mask_indices])
+            student_masked_patch_tokens = student_masked_patch_tokens.flatten(0, 1)
 
-        _attn_bias, cat_inputs = fmha.BlockDiagonalMask.from_tensor_list(
-            [
-                student_global_cls_tokens.unsqueeze(0),
-                student_local_cls_tokens.unsqueeze(0),
-                student_masked_patch_tokens.unsqueeze(0),
-            ]
-        )
-        after_head_list = _attn_bias.split(self.student_encoder_dict["dino_head"](cat_inputs))
-        (
-            student_global_cls_tokens_after_head,
-            student_local_cls_tokens_after_head,
-            student_patch_tokens_after_head,
-        ) = (
-            after_head_list[0].squeeze(0),
-            after_head_list[1].squeeze(0),
-            after_head_list[2].squeeze(0),
-        )
+            if self.ibot_separate_head:
+                student_global_cls_tokens_after_head, student_local_cls_tokens_after_head = (
+                    self.student_encoder_dict["dino_head"](
+                        torch.cat([student_global_cls_tokens, student_local_cls_tokens])
+                    ).split([len(student_global_cls_tokens), len(student_local_cls_tokens)])
+                )
+                student_patch_tokens_after_head = self.student_encoder_dict["ibot_head"](
+                    student_masked_patch_tokens
+                )
+            else:
+                _attn_bias, cat_inputs = fmha.BlockDiagonalMask.from_tensor_list(
+                    [
+                        student_global_cls_tokens.unsqueeze(0),
+                        student_local_cls_tokens.unsqueeze(0),
+                        student_masked_patch_tokens.unsqueeze(0),
+                    ]
+                )
+                after_head_list = _attn_bias.split(self.student_encoder_dict["dino_head"](cat_inputs))
+                (
+                    student_global_cls_tokens_after_head,
+                    student_local_cls_tokens_after_head,
+                    student_patch_tokens_after_head,
+                ) = (
+                    after_head_list[0].squeeze(0),
+                    after_head_list[1].squeeze(0),
+                    after_head_list[2].squeeze(0),
+                )
+        else:
+            student_global_cls_tokens_after_head, student_local_cls_tokens_after_head = (
+                self.student_encoder_dict["dino_head"](
+                    torch.cat([student_global_cls_tokens, student_local_cls_tokens])
+                ).split([len(student_global_cls_tokens), len(student_local_cls_tokens)])
+            )
         student_cls_tokens_after_head = torch.cat(
             [student_global_cls_tokens_after_head, student_local_cls_tokens_after_head],
             dim=0,
@@ -229,24 +321,26 @@ class XelaDINOv2Module(DINOv2Module):
                     teacher_global_cls_tokens.chunk(self.num_global_masks)[::-1]
                 )
 
-            teacher_global_patch_tokens = teacher_global_dict["x_norm_patchtokens"]
-            teacher_global_patch_tokens = einops.rearrange(
-                teacher_global_patch_tokens,
-                "b (t n) c -> (b n) t c",
-                n=global_masks.shape[-1],
-            )
-            teacher_masked_patch_tokens = teacher_global_patch_tokens.new_zeros(
-                (
-                    num_ibot_tokens,
-                    student_global_patch_tokens.shape[-2],
-                    student_global_patch_tokens.shape[-1],
-                )
-            )
-            teacher_masked_patch_tokens.copy_(teacher_global_patch_tokens[ibot_mask_indices])
-            teacher_masked_patch_tokens = teacher_masked_patch_tokens.flatten(0, 1)
-
             teacher_cls_tokens_after_head = self.teacher_encoder_dict["dino_head"](teacher_global_cls_tokens)
-            teacher_masked_patch_tokens_after_head = self.teacher_encoder_dict["dino_head"](teacher_masked_patch_tokens)
+            if self.ibot_enabled:
+                teacher_global_patch_tokens = teacher_global_dict["x_norm_patchtokens"]
+                teacher_global_patch_tokens = einops.rearrange(
+                    teacher_global_patch_tokens,
+                    "b (t n) c -> (b n) t c",
+                    n=global_masks.shape[-1],
+                )
+                teacher_masked_patch_tokens = teacher_global_patch_tokens.new_zeros(
+                    (
+                        num_ibot_tokens,
+                        student_global_patch_tokens.shape[-2],
+                        student_global_patch_tokens.shape[-1],
+                    )
+                )
+                teacher_masked_patch_tokens.copy_(teacher_global_patch_tokens[ibot_mask_indices])
+                teacher_masked_patch_tokens = teacher_masked_patch_tokens.flatten(0, 1)
+
+                patch_head = "ibot_head" if self.ibot_separate_head else "dino_head"
+                teacher_masked_patch_tokens_after_head = self.teacher_encoder_dict[patch_head](teacher_masked_patch_tokens)
 
             if self.centering == "centering":
                 teacher_dino_softmaxed_centered_list = self.dino_loss.softmax_center_teacher(
@@ -257,14 +351,16 @@ class XelaDINOv2Module(DINOv2Module):
                     -1,
                     *teacher_cls_tokens_after_head.shape[1:],
                 )
-                teacher_ibot_softmaxed_centered = self.ibot_patch_loss.softmax_center_teacher(
-                    teacher_masked_patch_tokens_after_head.unsqueeze(0),
-                    teacher_temp=self.current_teacher_temp,
-                )
-                teacher_ibot_softmaxed_centered = teacher_ibot_softmaxed_centered.squeeze(0)
+                if self.ibot_enabled:
+                    teacher_ibot_softmaxed_centered = self.ibot_patch_loss.softmax_center_teacher(
+                        teacher_masked_patch_tokens_after_head.unsqueeze(0),
+                        teacher_temp=self.current_teacher_temp,
+                    )
+                    teacher_ibot_softmaxed_centered = teacher_ibot_softmaxed_centered.squeeze(0)
                 if self._update_centers:
                     self.dino_loss.update_center(teacher_cls_tokens_after_head)
-                    self.ibot_patch_loss.update_center(teacher_masked_patch_tokens_after_head)
+                    if self.ibot_enabled:
+                        self.ibot_patch_loss.update_center(teacher_masked_patch_tokens_after_head)
 
             elif self.centering == "sinkhorn_knopp":
                 teacher_dino_softmaxed_centered_list = self.dino_loss.sinkhorn_knopp_teacher(
@@ -275,15 +371,16 @@ class XelaDINOv2Module(DINOv2Module):
                     -1,
                     *teacher_cls_tokens_after_head.shape[1:],
                 )
-                teacher_ibot_softmaxed_centered = self.ibot_patch_loss.sinkhorn_knopp_teacher(
-                    teacher_masked_patch_tokens_after_head,
-                    teacher_temp=self.current_teacher_temp,
-                    n_masked_patches_tensor=torch.tensor(
-                        num_ibot_tokens,
-                        dtype=int,
-                        device=teacher_masked_patch_tokens.device,
-                    ),
-                )
+                if self.ibot_enabled:
+                    teacher_ibot_softmaxed_centered = self.ibot_patch_loss.sinkhorn_knopp_teacher(
+                        teacher_masked_patch_tokens_after_head,
+                        teacher_temp=self.current_teacher_temp,
+                        n_masked_patches_tensor=torch.tensor(
+                            num_ibot_tokens,
+                            dtype=int,
+                            device=teacher_masked_patch_tokens.device,
+                        ),
+                    )
             else:
                 raise NotImplementedError
 
@@ -302,10 +399,12 @@ class XelaDINOv2Module(DINOv2Module):
             )
         )  # we don't apply koleo loss between cls tokens of a same image
 
-        ibot_loss_scale = 1.0 / self.num_global_masks
-        patch_loss = ibot_loss_scale * self.ibot_patch_loss(
-            student_patch_tokens_after_head, teacher_ibot_softmaxed_centered
-        )
+        patch_loss = dino_loss.new_zeros(())
+        if self.ibot_enabled:
+            ibot_loss_scale = 1.0 / self.num_global_masks
+            patch_loss = ibot_loss_scale * self.ibot_patch_loss(
+                student_patch_tokens_after_head, teacher_ibot_softmaxed_centered
+            )
         loss = dino_loss + patch_loss + koleo_loss
 
         self._last_ssl_components = {
@@ -314,6 +413,11 @@ class XelaDINOv2Module(DINOv2Module):
             "koleo_loss": koleo_loss.detach(),
         }
 
+        if self.collapse_diagnostics_every and self.step % self.collapse_diagnostics_every == 0:
+            self._last_ssl_components.update(self._collapse_metrics(
+                teacher_dino_softmaxed_centered_list, student_global_cls_tokens_after_head,
+                teacher_global_cls_tokens, student_global_cls_tokens,
+            ))
         return loss
 
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:

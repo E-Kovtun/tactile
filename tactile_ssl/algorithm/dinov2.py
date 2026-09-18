@@ -50,6 +50,8 @@ class DINOv2Module(Module, nn.Module):
         reconstruction_log_freq: int = 1000,
         legacy_teacher_crop_reversal: bool = False,
         freeze_last_layer_epochs: int = 1,
+        last_layer_unfreeze_warmup_epochs: int = 0,
+        last_layer_lr_scale: float = 1.0,
     ):
         super().__init__()
         self.optim_partial = optim_cfg
@@ -70,6 +72,12 @@ class DINOv2Module(Module, nn.Module):
         self.freeze_last_layer_epochs = int(freeze_last_layer_epochs)
         if self.freeze_last_layer_epochs < 0:
             raise ValueError("freeze_last_layer_epochs must be non-negative")
+        self.last_layer_unfreeze_warmup_epochs = int(last_layer_unfreeze_warmup_epochs)
+        if self.last_layer_unfreeze_warmup_epochs < 0:
+            raise ValueError("last_layer_unfreeze_warmup_epochs must be non-negative")
+        self.last_layer_lr_scale = float(last_layer_lr_scale)
+        if self.last_layer_lr_scale < 0.0:
+            raise ValueError("last_layer_lr_scale must be non-negative")
 
         self.generator = torch.Generator()
         self.step = -1
@@ -134,12 +142,24 @@ class DINOv2Module(Module, nn.Module):
         )
 
     def _freeze_last_layer_gradient(self, gradient: torch.Tensor) -> torch.Tensor:
-        if self._schedule_steps_per_epoch is None:
+        scale = self._last_layer_gradient_scale()
+        if scale == 0.0:
+            return torch.zeros_like(gradient)
+        if scale == 1.0:
             return gradient
+        return gradient * scale
+
+    def _last_layer_gradient_scale(self) -> float:
+        if self._schedule_steps_per_epoch is None:
+            return 1.0
         freeze_steps = self.freeze_last_layer_epochs * self._schedule_steps_per_epoch
         if self._schedule_step < freeze_steps:
-            return torch.zeros_like(gradient)
-        return gradient
+            return 0.0
+        warmup_steps = self.last_layer_unfreeze_warmup_epochs * self._schedule_steps_per_epoch
+        if warmup_steps == 0:
+            return 1.0
+        elapsed = self._schedule_step - freeze_steps + 1
+        return min(float(elapsed) / float(warmup_steps), 1.0)
 
     def _sample_ibot_ratio(self) -> float:
         low, high = self.ibot_mask_ratio
@@ -199,6 +219,11 @@ class DINOv2Module(Module, nn.Module):
             trainer_instance.writer.add_scalar(
                 f"{stage}/prototype_scale_mean", prototype_scale.mean(), step
             )
+            trainer_instance.writer.add_scalar(
+                f"{stage}/last_layer_gradient_scale",
+                self._last_layer_gradient_scale(),
+                step,
+            )
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         assert self.teacher_encoder is not None, "target encoder has not been created"
@@ -251,6 +276,15 @@ class DINOv2Module(Module, nn.Module):
         min_s, max_s = scale
         mask_scale = min_s + _rand * (max_s - min_s)
         max_keep = int(height * width * mask_scale)
+        # Signal transformers expose their tokens as a 1 x N patch grid.  The
+        # square-image formula below would take sqrt(N * scale) and then clamp
+        # the other dimension to one, shrinking a nominal 40--100% crop to
+        # only a few percent of the signal.  In one dimension the requested
+        # area fraction is simply the interval length fraction.
+        if height == 1:
+            return (1, max(1, min(width, max_keep)))
+        if width == 1:
+            return (max(1, min(height, max_keep)), 1)
         aspect_ratio = 1.0
         # -- Compute block height and width (given scale and aspect-ratio)
         h = int(round(math.sqrt(max_keep * aspect_ratio)))
@@ -569,12 +603,18 @@ class DINOv2Module(Module, nn.Module):
     ) -> Tuple[torch.optim.Optimizer, Optional[Dict], Optional[Dict]]:
         param_dict = {pn: p for pn, p in self.named_parameters() if not pn.startswith("online_probes")}
         param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        decay_params = [p for p in param_dict.values() if p.dim() >= 2]
-        nodecay_params = [p for p in param_dict.values() if p.dim() < 2]
+        last_layer_param = self.student_encoder_dict["dino_head"].last_layer.weight_v
+        decay_params = [
+            p for p in param_dict.values() if p.dim() >= 2 and p is not last_layer_param
+        ]
+        nodecay_params = [
+            p for p in param_dict.values() if p.dim() < 2 and p is not last_layer_param
+        ]
 
         optim_groups = [
             {"params": decay_params},
             {"params": nodecay_params, "WD_exclude": True, "weight_decay": 0.0},
+            {"params": [last_layer_param], "lr_scale": self.last_layer_lr_scale},
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
@@ -587,6 +627,9 @@ class DINOv2Module(Module, nn.Module):
         log.info(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
 
         optimizer = self.optim_partial(optim_groups)
+        optimizer.param_groups[-1]["lr"] = (
+            optimizer.defaults["lr"] * self.last_layer_lr_scale
+        )
         if self.lr_scheduler_partial is None:
             return optimizer, None, None
 
