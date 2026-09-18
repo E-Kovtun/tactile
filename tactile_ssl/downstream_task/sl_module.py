@@ -59,6 +59,8 @@ class SLModule(Module, nn.Module):
         checkpoint_task: Optional[str] = None,
         train_encoder: bool = False,
         encoder_type: str = "jepa",
+        signal_encoder_type: Optional[str] = None,
+        coordinate_encoder_type: Optional[str] = None,
         encoder_normalization_float32: bool = False,
     ) -> None:
         super().__init__()
@@ -74,6 +76,7 @@ class SLModule(Module, nn.Module):
             self.load_encoder(
                 checkpoint_encoder,
                 encoder=self.model_encoder.signal_encoder,
+                encoder_type=signal_encoder_type or self.encoder_type,
             )
             if self.model_encoder.coordinate_encoder is not None:
                 if checkpoint_coordinate_encoder is None:
@@ -84,6 +87,7 @@ class SLModule(Module, nn.Module):
                 self.load_encoder(
                     checkpoint_coordinate_encoder,
                     encoder=self.model_encoder.coordinate_encoder,
+                    encoder_type=coordinate_encoder_type or self.encoder_type,
                 )
             elif checkpoint_coordinate_encoder is not None:
                 raise ValueError(
@@ -205,19 +209,35 @@ class SLModule(Module, nn.Module):
         self,
         checkpoint_encoder: str,
         encoder: Optional[nn.Module] = None,
+        encoder_type: Optional[str] = None,
     ):
         log.info(f"Loading encoder from {checkpoint_encoder}")
         checkpoint = torch.load(checkpoint_encoder, weights_only=False)
-        if "jepa" in self.encoder_type:
+        resolved_encoder_type = self.encoder_type if encoder_type is None else encoder_type
+        if "jepa" in resolved_encoder_type:
             encoder_key = "target_encoder"
-        elif "dino" in self.encoder_type:
+        elif "dino" in resolved_encoder_type:
             encoder_key = "teacher_encoder.backbone"
+        elif "byol" in resolved_encoder_type:
+            encoder_key = "target_encoder"
         else:
             encoder_key = "encoder"
         # get the keys in the checkpoint that contain the encoder
         target_keys = [key for key in checkpoint["model"].keys() if encoder_key in key]
+        # Current BYOL checkpoints store ``Sequential(backbone, projector)`` as
+        # target_encoder.  Downstream evaluation must load only the frozen
+        # backbone; the projector is part of the SSL objective, not the encoder.
+        if "byol" in resolved_encoder_type and any(
+            key.startswith(f"{encoder_key}.0.") for key in target_keys
+        ):
+            target_keys = [
+                key for key in target_keys if key.startswith(f"{encoder_key}.0.")
+            ]
+            prefix = f"{encoder_key}.0."
+        else:
+            prefix = f"{encoder_key}."
         # remove the prefix from the keys
-        new_keys = [key.replace(f"{encoder_key}.", "") for key in target_keys]
+        new_keys = [key.removeprefix(prefix) for key in target_keys]
         # create a state_dict with keys target_keys from the checkpoint
         new_state_dict = {
             new_key: checkpoint["model"][target_key] for new_key, target_key in zip(new_keys, target_keys)

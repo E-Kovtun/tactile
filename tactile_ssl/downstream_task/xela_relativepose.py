@@ -156,6 +156,22 @@ class XelaRelativePoseDecoder(nn.Module):
         return y
 
 
+class ProjectedXelaRelativePoseDecoder(XelaRelativePoseDecoder):
+    """Pose decoder with a trainable adapter for frozen AlexNet features."""
+
+    def __init__(self, input_embed_dim: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.input_norm = nn.LayerNorm(int(input_embed_dim))
+        output_embed_dim = self.layer_norm.normalized_shape[0]
+        self.input_projection = nn.Linear(int(input_embed_dim), output_embed_dim)
+        self.input_norm.apply(self._init_weights)
+        self.input_projection.apply(self._init_weights)
+
+    def forward(self, z, spatial_coords=None, graph_info=None):
+        z = self.input_projection(self.input_norm(z))
+        return super().forward(z, spatial_coords, graph_info)
+
+
 class XelaRelativePoseSpatialMLPDecoder(XelaRelativePoseDecoder):
     """Relative-pose decoder with supervised per-sensor XYZ embeddings."""
 

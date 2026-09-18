@@ -4,6 +4,7 @@ from .force_sl import (
     ForceLinearProbe,
     XelaForceSLModule,
     XelaForceLinearProbe,
+    ProjectedXelaForceLinearProbe,
     XelaForceConcatEmbeddingBaselineProbe,
     XelaForceSpatialMLPProbe,
     XelaForceSpatialAttentionProbe,

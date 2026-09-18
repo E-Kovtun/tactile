@@ -93,3 +93,15 @@ class LinearClassifier(nn.Module):
     def forward(self, x):
         x = self.probe(x)
         return x
+
+
+class ProjectedLinearClassifier(LinearClassifier):
+    """Linear classifier after a trainable bottleneck for wide SSL features."""
+
+    def __init__(self, input_embed_dim: int, projection_dim: int, *args, **kwargs):
+        super().__init__(input_embed_dim=projection_dim, *args, **kwargs)
+        self.input_norm = nn.LayerNorm(int(input_embed_dim))
+        self.input_projection = nn.Linear(int(input_embed_dim), int(projection_dim))
+
+    def forward(self, x):
+        return super().forward(self.input_projection(self.input_norm(x)))

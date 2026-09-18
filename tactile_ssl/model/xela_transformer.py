@@ -586,6 +586,12 @@ class XelaLateFusionEncoder(nn.Module):
 
         self.signal_encoder = signal_encoder
         self.coordinate_encoder = coordinate_encoder
+        self.signal_input_chans = int(signal_encoder.in_chans)
+        if self.signal_input_chans not in {3, 6}:
+            raise ValueError(
+                "Late fusion supports a 3-channel signal encoder or a 6-channel "
+                f"joint signal+coordinate encoder, got {self.signal_input_chans}"
+            )
         self.fusion_mode = fusion_mode
         self.random_embedding_std = float(random_embedding_std)
         self.in_chans = 6
@@ -637,7 +643,7 @@ class XelaLateFusionEncoder(nn.Module):
             )
         with torch.no_grad():
             signal_tokens = self.signal_encoder.forward_features(
-                x[..., :3]
+                x[..., : self.signal_input_chans]
             )["x_norm_patchtokens"]
         auxiliary_tokens = self._auxiliary_tokens(x[..., :6], signal_tokens)
         if auxiliary_tokens.shape != signal_tokens.shape:

@@ -112,6 +112,8 @@ class ForceSLModule(SLModule):
         checkpoint_task: Optional[str] = None,
         train_encoder: bool = False,
         encoder_type: str = "jepa",
+        signal_encoder_type: Optional[str] = None,
+        coordinate_encoder_type: Optional[str] = None,
         encoder_normalization_float32: bool = False,
     ):
         super().__init__(
@@ -124,6 +126,8 @@ class ForceSLModule(SLModule):
             checkpoint_task=checkpoint_task,
             train_encoder=train_encoder,
             encoder_type=encoder_type,
+            signal_encoder_type=signal_encoder_type,
+            coordinate_encoder_type=coordinate_encoder_type,
             encoder_normalization_float32=encoder_normalization_float32,
         )
         self.val_pred = []
@@ -442,7 +446,6 @@ class XelaForceLinearProbe(nn.Module):
             nn.Linear(embed_dim // 4, self.n_outputs),
         )
         self.with_last_activations = with_last_activations
-
         # self.pos_embed_fn = SinusoidalEmbed(10000, 1, embed_dim)
 
         # attn_bias = torch.ones(1, 1, 1000, 1000)
@@ -509,6 +512,21 @@ class XelaForceLinearProbe(nn.Module):
                 y[..., 0:2] = F.tanh(y[..., 0:2])
         
         return y
+
+
+class ProjectedXelaForceLinearProbe(XelaForceLinearProbe):
+    """Trainable low-dimensional adapter for wide frozen image features."""
+
+    def __init__(self, input_embed_dim: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.input_norm = nn.LayerNorm(int(input_embed_dim))
+        output_embed_dim = self.layer_norm.normalized_shape[0]
+        self.input_projection = nn.Linear(int(input_embed_dim), output_embed_dim)
+        self.input_norm.apply(self._init_weights)
+        self.input_projection.apply(self._init_weights)
+
+    def forward(self, x, spatial_coords=None, graph_info=None):
+        return super().forward(self.input_projection(self.input_norm(x)))
 
 
 class XelaForceSpatialMLPProbe(XelaForceLinearProbe):
