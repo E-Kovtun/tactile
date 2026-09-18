@@ -47,6 +47,10 @@ dataset_list:
         window_time: 0.1
         window_overlap: 0.0
         interpolating_freq: 100
+        # One 10 Hz sample: use the middle (zero-based index 5) of every
+        # non-overlapping ten-frame block on the 100 Hz grid.
+        frame_stride: 10
+        frame_offset: 5
         subtract_baseline: True
         smooth_data: False
         bias_noise_std: 0

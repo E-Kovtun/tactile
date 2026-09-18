@@ -12,8 +12,11 @@ from torch import nn
 import torch.nn.functional as F
 
 from torchvision import transforms as T
+from torchvision.transforms import functional as TF
 
 from tactile_ssl.algorithm.module import Module
+from tactile_ssl.data.xela.utils import XELA_FLATTEN_ORDER
+from tactile_ssl.data.xela_tdex.utils import XELA_IMG_ORDER
 from tactile_ssl.utils.ema import update_moving_average
 from tactile_ssl.utils.logging import get_pylogger
 
@@ -71,6 +74,63 @@ class RandomApply(nn.Module):
         if random.random() > self.p:
             return x
         return self.fn(x)
+
+
+class PerSampleTactileImageAugment(nn.Module):
+    """Apply the original T-Dex crop/blur recipe independently per image.
+
+    torchvision's tensor transforms draw one set of random parameters when a
+    whole ``[B, C, H, W]`` batch is passed in.  The original dataset-level
+    augmentation was invoked per sample, so preserve that sampling semantics
+    when augmentations run inside BYOL.
+    """
+
+    def __init__(self, img_size=(224, 224)):
+        super().__init__()
+        self.img_size = tuple(int(value) for value in img_size)
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        if images.ndim == 3:
+            images = images.unsqueeze(0)
+            squeeze = True
+        else:
+            squeeze = False
+        if images.ndim != 4:
+            raise ValueError(f"Expected image or image batch, got {tuple(images.shape)}")
+        batch, _, height, width = images.shape
+        device, dtype = images.device, images.dtype
+
+        # Independent near-full random crops, evaluated in one grid_sample.
+        apply_crop = torch.rand(batch, device=device) < 0.5
+        scale = torch.empty(batch, device=device).uniform_(0.9, 1.0)
+        log_ratio = torch.empty(batch, device=device).uniform_(
+            float(torch.log(torch.tensor(0.75))),
+            float(torch.log(torch.tensor(4.0 / 3.0))),
+        )
+        ratio = log_ratio.exp()
+        crop_h = (scale / ratio).sqrt().clamp(max=1.0)
+        crop_w = (scale * ratio).sqrt().clamp(max=1.0)
+        crop_h = torch.where(apply_crop, crop_h, torch.ones_like(crop_h))
+        crop_w = torch.where(apply_crop, crop_w, torch.ones_like(crop_w))
+        center_y = crop_h / 2 + torch.rand(batch, device=device) * (1 - crop_h)
+        center_x = crop_w / 2 + torch.rand(batch, device=device) * (1 - crop_w)
+        theta = torch.zeros(batch, 2, 3, device=device, dtype=dtype)
+        theta[:, 0, 0] = crop_w
+        theta[:, 1, 1] = crop_h
+        theta[:, 0, 2] = 2 * center_x - 1
+        theta[:, 1, 2] = 2 * center_y - 1
+        grid = F.affine_grid(theta, images.shape, align_corners=False)
+        images = F.grid_sample(images, grid, mode="bilinear", padding_mode="border", align_corners=False)
+
+        # Blur is vectorized; its Bernoulli decision remains independent per image.
+        sigma = float(torch.empty((), device=device).uniform_(1.0, 2.0).item())
+        blurred = TF.gaussian_blur(images, kernel_size=[3, 3], sigma=[sigma, sigma])
+        blur_mask = (torch.rand(batch, device=device) < 0.5).view(batch, 1, 1, 1)
+        images = torch.where(blur_mask, blurred, images)
+        images = (images - self.mean.to(dtype=dtype)) / self.std.to(dtype=dtype)
+        return images.squeeze(0) if squeeze else images
 
 
 # MLP class for projector and predictor
@@ -176,6 +236,7 @@ class BYOLModule(Module, nn.Module):
         moving_average_decay: Union[float, Tuple[float, ...]] = 0.99,
         use_momentum=True,
         in_channels=3,
+        use_precomputed_views: bool = False,
     ):
         super().__init__()
         self.backbone = backbone
@@ -184,6 +245,7 @@ class BYOLModule(Module, nn.Module):
         self.wd_scheduler_partial = wd_scheduler_cfg
         # self.scheduler_partial = scheduler_cfg
         self.use_momentum = use_momentum
+        self.use_precomputed_views = bool(use_precomputed_views)
 
         DEFAULT_AUG = torch.nn.Sequential(
             RandomApply(T.ColorJitter(0.8, 0.8, 0.8, 0.2), p=0.3),
@@ -260,7 +322,7 @@ class BYOLModule(Module, nn.Module):
     #     update_moving_average(self.target_encoder, self.online_encoder, self.moving_average_decay)
     #     trainer_instance.fabric.barrier()
 
-    def forward(self, x, return_embedding=False, return_projection=True):
+    def forward(self, x, return_embedding=False, return_projection=True, image_one=None, image_two=None):
         assert not (
             self.training and x.shape[0] == 1
         ), "you must have greater than 1 sample when training, due to the batchnorm in the projection layer"
@@ -268,7 +330,8 @@ class BYOLModule(Module, nn.Module):
         if return_embedding:
             return self.target_encoder(x)
 
-        image_one, image_two = self.augment1(x), self.augment2(x)
+        if image_one is None or image_two is None:
+            image_one, image_two = self.augment1(x), self.augment2(x)
 
         online_proj_one = self.online_encoder(image_one)
         online_proj_two = self.online_encoder(image_two)
@@ -290,7 +353,14 @@ class BYOLModule(Module, nn.Module):
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
         x = batch["image"]
         tactile_values = batch["tactile_values"]
-        ssl_loss = self.forward(x)
+        if self.use_precomputed_views:
+            ssl_loss = self.forward(
+                x,
+                image_one=batch["aug_image"],
+                image_two=batch["aug_image2"],
+            )
+        else:
+            ssl_loss = self.forward(x)
 
         with torch.no_grad():
             embedding = self.target_encoder(x)

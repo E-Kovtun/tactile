@@ -14,7 +14,6 @@ from scipy.spatial.transform import Rotation as R
 
 from tactile_ssl.data.xela.utils import (
     read_xela_data,
-    read_joint_data,
     compute_interp_timestamps,
     load_data_dict,
     pad_xela_sample,
@@ -59,8 +58,14 @@ class XelaBYOLDataset(data.Dataset):
         self.window_time = config.window_time
         assert 0 <= config.window_overlap < 1, "Window overlap should be between 0 and 1"
         self.window_overlap = config.window_overlap
-        # self.interpolating_freq = config.interpolating_freq
-        self.interpolating_freq = 10
+        # The original baseline emits one instantaneous sample at 10 Hz.  Keep
+        # the 100 Hz grid explicit so the phase within each ten-frame block is
+        # reproducible instead of being implicit in a direct 10 Hz resample.
+        self.interpolating_freq = int(config.get("interpolating_freq", 100))
+        self.frame_stride = int(config.get("frame_stride", 10))
+        self.frame_offset = int(config.get("frame_offset", 0))
+        if self.frame_stride <= 0 or not 0 <= self.frame_offset < self.frame_stride:
+            raise ValueError("frame_offset must be in [0, frame_stride)")
         self.tactile_img_size = 224
         shuffle_type = None
         # self.num_frames_per_window = int(round(self.window_time * self.interpolating_freq))
@@ -92,25 +97,33 @@ class XelaBYOLDataset(data.Dataset):
         self.xela_mean, self.xela_std = None, None
 
         xela_array = np.array(xela_dict, copy=True)
-        self.timestamps, self.num_frames = compute_interp_timestamps([xela_array[:, 0, 0]], self.interpolating_freq)
+        full_timestamps, _ = compute_interp_timestamps(
+            [xela_array[:, 0, 0]], self.interpolating_freq
+        )
         
-        self.xela_array = read_xela_data(
+        full_xela_array = read_xela_data(
             xela_array,
-            self.timestamps,
+            full_timestamps,
             self.interpolating_freq,
             self.smooth_data,
         )
+        selected = full_xela_array[self.frame_offset :: self.frame_stride]
+        self.timestamps = selected[:, 0, 0]
+        # Match the current common Xela contract: xela_array contains magnetic
+        # channels only; timestamps are stored separately.
+        self.xela_array = selected[..., 1:]
+        self.num_frames = len(self.xela_array)
         self.data_idxs = np.arange(0, self.num_frames)
 
         # Remove outliers
-        self.xela_array[..., 1:] = np.where(self.xela_array[..., 1:] < 20000, 0, self.xela_array[..., 1:])
-        self.xela_array[..., 1:] = np.where(self.xela_array[..., 1:] > 60000, 0, self.xela_array[..., 1:])
+        self.xela_array = np.where(self.xela_array < 20000, 0, self.xela_array)
+        self.xela_array = np.where(self.xela_array > 60000, 0, self.xela_array)
 
         # NOTE: There were some bad sensors during pilot pretraining data collection (Sensor IDX: 104, 145)
-        mask = self.xela_array[:, ..., 1] != 0
+        mask = self.xela_array[..., 0] != 0
         if self.subtract_baseline and self.xela_baseline is not None:
             baseline = einops.repeat(self.xela_baseline, "k c -> b k c", b=self.xela_array.shape[0])
-            self.xela_array[mask, 1:] = self.xela_array[mask, 1:] - baseline[mask, :]
+            self.xela_array[mask, :] = self.xela_array[mask, :] - baseline[mask, :]
         
         self.tactile_img = TactileImage(tactile_image_size=self.tactile_img_size, shuffle_type=shuffle_type)
         self.augmentations = get_tactile_augmentations(self.tactile_img_size)
@@ -134,22 +147,23 @@ class XelaBYOLDataset(data.Dataset):
         index = self.data_idxs[idx]
         # timestamp = self.timestamps[index : index + num_frames_per_window]
         sensor_data_flat = self.xela_array[index]
-        sensor_data_flat = sensor_data_flat[..., 1:]
         tactile_value = xela_flat_to_grid(sensor_data_flat)
 
         tactile_image = self._get_tactile_image(tactile_value)
 
+        # Generate BYOL views per sample in DataLoader workers. Applying the
+        # torchvision transform later to a collated BCHW tensor would share a
+        # single random crop/blur draw across the whole batch.
         aug_tactile_image = self.augmentations(tactile_image)
+        aug_tactile_image2 = self.augmentations(tactile_image)
         sensor_data_flat = torch.from_numpy(sensor_data_flat).float()
 
         sample_dict =  {
             "image": tactile_image.float(),
             "aug_image": aug_tactile_image.float(),
+            "aug_image2": aug_tactile_image2.float(),
             "tactile_values": sensor_data_flat,
         }
         if self.with_object_classes:
             sample_dict.update({"object_classification": torch.tensor(self.object_label)})
         return sample_dict
-
-
-
