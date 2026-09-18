@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - /experiment/deco/jepa_graph
+  - override /data: deco_task4
+  - _self_
+
+run_name: direct_connectedctx_2local2random_matched150
+data:
+  dataset:
+    include_graph: true
+  graph_mask_collator:
+    _target_: tactile_ssl.utils.deco_connected_context_20260911.DecoTwoHandConnectedContextCollator
+    target_specs:
+      - {hand: 0, strategy: connected_region}
+      - {hand: 0, strategy: random}
+      - {hand: 1, strategy: connected_region}
+      - {hand: 1, strategy: random}
+  train_dataloader:
+    batch_size: 512
+    shuffle: false
+  val_dataloader:
+    batch_size: 512
+trainer:
+  max_epochs: 150
+algorithm:
+  lr_scheduler_cfg:
+    warmup_epochs: 5

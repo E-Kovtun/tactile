@@ -1,0 +1,37 @@
+# @package _global_
+defaults:
+  - /experiment/sock/jepa_source_action_only
+  - _self_
+
+run_name: pairwise_bothfeet_action_stride5_150k
+
+data:
+  dataset:
+    stride: 5
+  graph_mask_collator:
+    _target_: tactile_ssl.utils.sock_pairwise_jepa_masking.SockPairwiseJEPAGraphMaskCollator
+    context_mask_scale: ${algorithm.context_mask_scale}
+    target_mask_scale: ${algorithm.target_mask_scale}
+    min_context_keep_tokens: 32
+    min_context_keep_ratio: 0.15
+    context_feet: [0, 1]
+    growth: dijkstra
+    target_specs:
+      - {foot: 0, strategy: connected_region}
+      - {foot: 0, strategy: random}
+      - {foot: 1, strategy: connected_region}
+      - {foot: 1, strategy: random}
+
+algorithm:
+  _target_: tactile_ssl.algorithm.sock_pairwise_jepa.SockPairwiseJEPAModule
+  num_context_masks: 2
+  num_target_masks: 4
+  context_target_pairs:
+    - [0, 0]
+    - [0, 1]
+    - [0, 2]
+    - [0, 3]
+    - [1, 0]
+    - [1, 1]
+    - [1, 2]
+    - [1, 3]

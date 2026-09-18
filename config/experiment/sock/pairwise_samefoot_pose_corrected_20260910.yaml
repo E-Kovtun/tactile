@@ -1,0 +1,21 @@
+# @package _global_
+defaults:
+  - /experiment/sock/jepa_pairwise_samefoot_pose
+  - _self_
+run_name: corrected_samefoot_pose_500ep
+algorithm:
+  _target_: tactile_ssl.algorithm.sock_pairwise_corrected_20260910.PairAwareSockJEPA
+  teacher_scope: foot
+  lr_scheduler_cfg:
+    warmup_epochs: 30
+data:
+  graph_mask_collator:
+    _target_: tactile_ssl.algorithm.sock_pairwise_corrected_20260910.PairAwareSockCollator
+    context_target_pairs: ${algorithm.context_target_pairs}
+  train_dataloader:
+    batch_size: 256
+  val_dataloader:
+    batch_size: 256
+trainer:
+  max_epochs: 500
+  max_steps: null
