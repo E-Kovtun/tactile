@@ -16,6 +16,7 @@ import torch.nn as nn
 
 from tactile_ssl.utils.logging import get_pylogger
 from tactile_ssl.data.xela.utils import XELA_FLATTEN_ORDER
+from tactile_ssl.data.xela.atlas import xela_2d_sincos_position_embedding
 from tactile_ssl.model import SignalTransformer
 
 from .layers import PatchEmbed1d
@@ -109,7 +110,7 @@ class XelaTransformer(SignalTransformer):
         head: Optional[nn.Module] = None,
         act_layer: Callable[..., nn.Module] = nn.GELU,
         norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-        pos_embed_fn: Literal["sinusoidal", "learned"] = "learned",
+        pos_embed_fn: Literal["sinusoidal", "learned", "xela_2d_sincos"] = "learned",
         init_values: Optional[float] = None,
         num_register_tokens: int = 0,
         drop_path_rate: float = 0.0,
@@ -304,6 +305,22 @@ class XelaTransformer(SignalTransformer):
         if self.use_taxel_type_embedding:
             nn.init.trunc_normal_(self.taxeltype_embed, std=0.02)
         self.init_weights()
+
+    def init_pos_embed(self, pos_embed_fn: str) -> None:
+        if pos_embed_fn != "xela_2d_sincos":
+            super().init_pos_embed(pos_embed_fn)
+            return
+        self.pos_embed_fn = pos_embed_fn
+        self.register_buffer(
+            "pos_embed",
+            xela_2d_sincos_position_embedding(self.embed_dim),
+            persistent=True,
+        )
+
+    def get_position_embedding(self, device: torch.device) -> torch.Tensor:
+        if self.pos_embed_fn == "xela_2d_sincos":
+            return self.pos_embed.to(device=device, dtype=torch.float32)
+        return super().get_position_embedding(device)
 
     def update_stats(self, xela_mean, xela_std):
         assert isinstance(xela_mean, torch.Tensor) and isinstance(xela_std, torch.Tensor)

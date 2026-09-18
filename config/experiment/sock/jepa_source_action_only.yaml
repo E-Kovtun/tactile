@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - /experiment/sock/jepa_inductive_all_random
+  - _self_
+
+run_name: source_action_only_official_stride5_150k
+
+data:
+  dataset:
+    include_classification: true
+    classification_recording_split: all
+    classification_window_split: train
+    pose_splits: []
+    source_normalization: true
+    sampling_temperature: null
+    action_normalization_mean: 559.1628505277317
+    action_normalization_std: 88.54081723165012
+
+trainer:
+  # 12,415 samples -> 48 optimizer steps/epoch on 4 GPUs at batch 64/GPU.
+  max_epochs: 3125
+  max_steps: 150000
+
+algorithm:
+  lr_scheduler_cfg:
+    warmup_epochs: 188  # 9,024 optimizer steps.

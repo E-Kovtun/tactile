@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - /experiment/sock/ijepa_action_2d_20260910
+  - _self_
+data:
+  dataset:
+    include_classification: false
+    pose_splits: [train]
+    source_normalization: true
+    sampling_temperature: null
+    pose_normalization_mean: 0.0804904026450019
+    pose_normalization_std: 0.22589546589653367

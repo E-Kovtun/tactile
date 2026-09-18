@@ -1,0 +1,32 @@
+sensor: deco
+
+dataset:
+  _target_: tactile_ssl.data.deco.create_deco_ssl_datasets
+  root: ${paths.deco_root}
+  manifest_path: ${paths.deco_root}/task4-manifest.json
+  window_size: 3
+  stride: 1
+  split_seed: ${seed}
+  val_episode_ratio: 0.15
+  test_episode_ratio: 0.15
+  normalization: deco_max
+  left_scale: 3486.0
+  right_scale: 4050.0
+  include_graph: true
+
+train_dataloader:
+  batch_size: 16
+  num_workers: 8
+  # Keep windows episode-contiguous so each worker reuses the tar index.
+  shuffle: false
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+
+val_dataloader:
+  batch_size: 16
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true
