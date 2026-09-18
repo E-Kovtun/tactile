@@ -260,6 +260,13 @@ def get_dataloaders(cfg: DictConfig):
         collate_cfg = loader_kwargs.get("collate_fn")
         if isinstance(collate_cfg, (DictConfig, dict)):
             loader_kwargs["collate_fn"] = hydra.utils.instantiate(collate_cfg)
+        batch_sampler_cfg = loader_kwargs.pop("batch_sampler", None)
+        if isinstance(batch_sampler_cfg, (DictConfig, dict)):
+            loader_kwargs["batch_sampler"] = hydra.utils.instantiate(
+                batch_sampler_cfg, dataset=dataset
+            )
+            for incompatible_key in ("batch_size", "shuffle", "sampler", "drop_last"):
+                loader_kwargs.pop(incompatible_key, None)
         return data.DataLoader(dataset, **loader_kwargs)
 
     train_dataloader = build_dataloader(train_dset, cfg.data.train_dataloader)

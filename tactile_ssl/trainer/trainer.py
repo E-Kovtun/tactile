@@ -202,7 +202,17 @@ class Trainer:
         self.fabric.launch()
 
         # setup dataloaders
-        train_loader = self.fabric.setup_dataloaders(train_loader, use_distributed_sampler=self.use_distributed_sampler)
+        train_batch_sampler = getattr(train_loader, "batch_sampler", None)
+        train_uses_custom_distributed_batches = bool(
+            getattr(train_batch_sampler, "handles_distributed", False)
+        )
+        train_loader = self.fabric.setup_dataloaders(
+            train_loader,
+            use_distributed_sampler=(
+                self.use_distributed_sampler
+                and not train_uses_custom_distributed_batches
+            ),
+        )
         if val_loader is not None:
             val_loader = self.fabric.setup_dataloaders(val_loader, use_distributed_sampler=self.use_distributed_sampler)
         # setup module and optimizer

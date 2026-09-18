@@ -1,0 +1,8 @@
+data_root: /workspace-SR004.nfs2/konovalov/tactile/datasets/deco50/task4
+deco_root: ${paths.data_root}
+log_dir: /workspace-SR004.nfs2/konovalov/tactile/experiments_deco
+tensorboard_dir: /workspace-SR004.nfs2/konovalov/tactile/lightning_logs_deco
+encoder_checkpoint_root: /workspace-SR004.nfs2/konovalov/tactile/experiments_deco
+
+output_dir: ${hydra:runtime.output_dir}
+work_dir: ${hydra:runtime.cwd}

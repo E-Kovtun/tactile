@@ -1,0 +1,30 @@
+sensor: deco
+
+dataset:
+  _target_: tactile_ssl.data.deco_ssl_cache.create_cached_deco_ssl_datasets
+  cache_root: ${paths.deco_root}/tactile-ssl-cache-v1
+  cache_manifest_path: ${paths.deco_root}/tactile-ssl-cache-v1/manifest.json
+  split_seed: 42
+  window_size: 3
+  stride: 3
+  include_graph: false
+
+train_dataloader:
+  num_workers: 8
+  batch_sampler:
+    _target_: tactile_ssl.data.deco_ssl_cache.EpisodeDiverseBatchSampler
+    # Per-rank batch size. The sampler coordinates all DDP ranks so one
+    # effective optimizer step contains windows from distinct episodes.
+    batch_size: 64
+    drop_last: true
+    seed: ${seed}
+  pin_memory: true
+  persistent_workers: true
+
+val_dataloader:
+  batch_size: 64
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true

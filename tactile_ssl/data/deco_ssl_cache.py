@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import heapq
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+import torch.distributed as dist
+from torch.utils.data import Dataset, Sampler
 
 
 CACHE_FORMAT_VERSION = 1
@@ -80,6 +82,11 @@ class CachedDecoSSLDataset(Dataset):
     def __len__(self) -> int:
         return self.length
 
+    @property
+    def group_ids(self) -> np.ndarray:
+        """Episode identifier for every cached, already-contiguous window."""
+        return self._open_arrays()["group_id"]
+
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         if index < 0:
             index += self.length
@@ -94,6 +101,149 @@ class CachedDecoSSLDataset(Dataset):
             "sample_id": torch.tensor(int(arrays["sample_id"][index]), dtype=torch.long),
             "group_id": torch.tensor(int(arrays["group_id"][index]), dtype=torch.long),
         }
+
+
+class EpisodeDiverseBatchSampler(Sampler[list[int]]):
+    """Build distributed batches with at most one window per DECO episode.
+
+    Cached samples already contain one contiguous three-frame window. This
+    sampler only changes which window starts are selected together: it shuffles
+    starts independently inside every episode, then constructs each global DDP
+    step from distinct episodes. Apart from the incomplete epoch tail, every
+    cached window is visited exactly once per epoch.
+    """
+
+    handles_distributed = True
+
+    def __init__(
+        self,
+        dataset: CachedDecoSSLDataset | Sampler[int],
+        batch_size: int,
+        *,
+        drop_last: bool = True,
+        seed: int = 0,
+        num_replicas: int | None = None,
+        rank: int | None = None,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if not drop_last:
+            raise ValueError(
+                "EpisodeDiverseBatchSampler requires drop_last=true so every "
+                "DDP rank receives an equally sized episode-diverse batch"
+            )
+        if (num_replicas is None) != (rank is None):
+            raise ValueError("num_replicas and rank must be provided together")
+        if num_replicas is not None:
+            if num_replicas <= 0:
+                raise ValueError("num_replicas must be positive")
+            if rank < 0 or rank >= num_replicas:
+                raise ValueError("rank must lie in [0, num_replicas)")
+
+        # Lightning Fabric reconstructs custom batch samplers while wrapping a
+        # DataLoader and passes the loader's ordinary sampler as the first
+        # positional argument.  Recover the underlying dataset in that case;
+        # our sampler remains responsible for DDP sharding itself.
+        if not hasattr(dataset, "group_ids") and hasattr(dataset, "data_source"):
+            dataset = dataset.data_source
+        if not hasattr(dataset, "group_ids"):
+            raise TypeError(
+                "EpisodeDiverseBatchSampler requires a dataset with group_ids "
+                "or a sampler whose data_source provides group_ids"
+            )
+
+        self.dataset = dataset
+        self.batch_size = int(batch_size)
+        self.drop_last = True
+        self.seed = int(seed)
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+
+        group_ids = np.asarray(dataset.group_ids)
+        if group_ids.ndim != 1 or len(group_ids) != len(dataset):
+            raise ValueError("dataset.group_ids must be one-dimensional and match dataset length")
+        order = np.argsort(group_ids, kind="stable")
+        _, starts, counts = np.unique(
+            group_ids[order], return_index=True, return_counts=True
+        )
+        self._episode_indices = [
+            order[start : start + count].astype(np.int64, copy=True)
+            for start, count in zip(starts.tolist(), counts.tolist())
+        ]
+
+    def _distributed_context(self) -> tuple[int, int]:
+        if self.num_replicas is not None:
+            return int(self.num_replicas), int(self.rank)
+        if dist.is_available() and dist.is_initialized():
+            return dist.get_world_size(), dist.get_rank()
+        return 1, 0
+
+    def __len__(self) -> int:
+        world_size, _ = self._distributed_context()
+        return len(self.dataset) // (self.batch_size * world_size)
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __iter__(self) -> Iterator[list[int]]:
+        world_size, rank = self._distributed_context()
+        global_batch_size = self.batch_size * world_size
+        num_batches = len(self.dataset) // global_batch_size
+        if num_batches == 0:
+            raise ValueError(
+                f"Dataset has {len(self.dataset)} windows, fewer than one global "
+                f"batch of {global_batch_size}"
+            )
+
+        rng = np.random.default_rng(self.seed + self.epoch)
+        self.epoch += 1
+        pools = [rng.permutation(indices) for indices in self._episode_indices]
+        counts = np.asarray([len(pool) for pool in pools], dtype=np.int64)
+
+        # Remove only the incomplete global tail. Dropping from the currently
+        # longest episodes improves scheduling feasibility without reweighting
+        # any complete batch.
+        tail = len(self.dataset) - num_batches * global_batch_size
+        for _ in range(tail):
+            largest = np.flatnonzero(counts == counts.max())
+            counts[int(rng.choice(largest))] -= 1
+
+        active_groups = int(np.count_nonzero(counts))
+        if active_groups < global_batch_size or int(counts.max()) > num_batches:
+            raise ValueError(
+                "Cannot form episode-diverse distributed batches: need at least "
+                f"{global_batch_size} active episodes and no episode may contain "
+                f"more than {num_batches} retained windows; got {active_groups} "
+                f"episodes and maximum {int(counts.max())} windows"
+            )
+
+        positions = np.zeros(len(pools), dtype=np.int64)
+        heap = [
+            (-int(count), float(rng.random()), group)
+            for group, count in enumerate(counts)
+            if count
+        ]
+        heapq.heapify(heap)
+
+        for _ in range(num_batches):
+            if len(heap) < global_batch_size:
+                raise RuntimeError("Episode-diverse scheduling became infeasible")
+            selected = [heapq.heappop(heap) for _ in range(global_batch_size)]
+            global_batch: list[int] = []
+            for negative_remaining, _, group in selected:
+                position = int(positions[group])
+                global_batch.append(int(pools[group][position]))
+                positions[group] += 1
+                remaining = -negative_remaining - 1
+                if remaining:
+                    heapq.heappush(
+                        heap, (-remaining, float(rng.random()), group)
+                    )
+
+            rng.shuffle(global_batch)
+            start = rank * self.batch_size
+            yield global_batch[start : start + self.batch_size]
 
 
 def create_cached_deco_ssl_datasets(
