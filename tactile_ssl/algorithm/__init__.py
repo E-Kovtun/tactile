@@ -1,5 +1,5 @@
 from .module import Module  # isort: skip # noqa F401
-from .byol import BYOLModule  # noqa F401
+from .byol import BYOLModule, PostConvXelaBYOLAugment, TactileBYOLAugment, TactileBYOLModule  # noqa F401
 from .dinov2 import DINOv2Module  # noqa F401
 from .mae import MAEModule  # noqa F401
 from .d360_dino import D360DINOModule  # noqa F401

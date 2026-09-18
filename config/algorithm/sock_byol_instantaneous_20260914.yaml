@@ -1,0 +1,29 @@
+_target_: tactile_ssl.algorithm.TactileBYOLModule
+encoder:
+  _target_: tactile_ssl.model.InstantaneousTactileAlexNet
+  rasterizer:
+    _target_: tactile_ssl.model.SockTactileRasterizer
+    sensor_map_path: ${paths.work_dir}/notebooks/assets/context_visualization/sock_physical_sensor_map.csv
+  sequence_length: ${data.dataset.window_size}
+  frame_index: 2
+  pretrained: true
+  image_size: 224
+augment_fn:
+  _target_: tactile_ssl.algorithm.TactileBYOLAugment
+  image_size: 224
+  crop_scale: [0.9, 1.0]
+  crop_probability: 0.5
+  blur_probability: 0.5
+  blur_kernel_size: 3
+  blur_sigma: [1.0, 2.0]
+projection_dim: 1024
+projection_hidden_dim: 4096
+moving_average_decay: 0.99
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.Adam
+  lr: 1.0e-3
+  weight_decay: 1.0e-5
+lr_scheduler_cfg: null
+wd_scheduler_cfg: null
+

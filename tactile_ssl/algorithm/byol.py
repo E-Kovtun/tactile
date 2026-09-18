@@ -497,3 +497,309 @@ class BYOLModule(Module, nn.Module):
                 raise RuntimeError("BYOL total schedule length changed since the checkpoint was created")
             start_step = int(state["schedule_step"])
         self._reset_momentum_schedule(start_step)
+
+
+class TactileBYOLAugment(nn.Module):
+    """T-Dex spatial augmentations, shared across every frame of a window."""
+
+    def __init__(
+        self,
+        image_size: int = 224,
+        crop_scale: Tuple[float, float] = (0.9, 1.0),
+        crop_ratio: Tuple[float, float] = (1.0, 1.0),
+        crop_probability: float = 0.5,
+        blur_probability: float = 0.5,
+        blur_kernel_size: int = 3,
+        blur_sigma: Tuple[float, float] = (1.0, 2.0),
+    ) -> None:
+        super().__init__()
+        self.image_size = int(image_size)
+        self.crop_scale = tuple(float(value) for value in crop_scale)
+        self.crop_ratio = tuple(float(value) for value in crop_ratio)
+        self.crop_probability = float(crop_probability)
+        self.blur_probability = float(blur_probability)
+        self.blur_kernel_size = int(blur_kernel_size)
+        self.blur_sigma = tuple(float(value) for value in blur_sigma)
+
+    def _augment_one(self, video: torch.Tensor) -> torch.Tensor:
+        # Treat time as extra channels so crop and blur parameters are shared
+        # by all frames and cannot create artificial temporal motion.
+        channels, time, height, width = video.shape
+        image = video.reshape(channels * time, height, width)
+        if torch.rand((), device=video.device).item() < self.crop_probability:
+            top, left, crop_height, crop_width = T.RandomResizedCrop.get_params(
+                image,
+                scale=self.crop_scale,
+                ratio=self.crop_ratio,
+            )
+            image = TF.resized_crop(
+                image,
+                top,
+                left,
+                crop_height,
+                crop_width,
+                [self.image_size, self.image_size],
+                antialias=True,
+            )
+        if torch.rand((), device=video.device).item() < self.blur_probability:
+            sigma = float(torch.empty((), device=video.device).uniform_(*self.blur_sigma).item())
+            image = TF.gaussian_blur(image, [self.blur_kernel_size, self.blur_kernel_size], [sigma, sigma])
+        return image.reshape(channels, time, self.image_size, self.image_size)
+
+    def forward(self, video: torch.Tensor) -> torch.Tensor:
+        if video.ndim != 5:
+            raise ValueError(f"Tactile BYOL augmentation expects [B,C,T,H,W], got {tuple(video.shape)}")
+        return torch.stack([self._augment_one(sample) for sample in video], dim=0)
+
+
+class PostConvXelaBYOLAugment(TactileBYOLAugment):
+    """Physical Xela corruptions applied after temporal aggregation.
+
+    Random parameters are shared along the chunk dimension. This also lets the
+    caller concatenate online/target chunks there and apply exactly the same
+    corruption to both encoders.
+    """
+
+    def __init__(
+        self,
+        channel_gain_range: Tuple[float, float] = (1.0, 1.0),
+        pad_gain_range: Tuple[float, float] = (1.0, 1.0),
+        pad_offset_std: float = 0.0,
+        noise_std_range: Tuple[float, float] = (0.0, 0.0),
+        drop_pads: Tuple[int, int] = (0, 0),
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.channel_gain_range = tuple(float(value) for value in channel_gain_range)
+        self.pad_gain_range = tuple(float(value) for value in pad_gain_range)
+        self.pad_offset_std = float(pad_offset_std)
+        self.noise_std_range = tuple(float(value) for value in noise_std_range)
+        self.drop_pads = tuple(int(value) for value in drop_pads)
+        if not 0 <= self.drop_pads[0] <= self.drop_pads[1] <= len(XELA_FLATTEN_ORDER):
+            raise ValueError("drop_pads must be an ordered range within the 18 Xela pads")
+        masks = torch.zeros(len(XELA_FLATTEN_ORDER), 28, 24)
+        for pad_index, (name, count) in enumerate(XELA_FLATTEN_ORDER.items()):
+            row, col = XELA_IMG_ORDER[name]
+            if "aftc" in name:
+                masks[pad_index, row + 2 : row + 6, col : col + 6] = 1
+                masks[pad_index, row, col + 2 : col + 4] = 1
+                masks[pad_index, row + 1, col + 1 : col + 5] = 1
+            elif "4x4" in name:
+                masks[pad_index, row : row + 4, col + 2 : col + 6] = 1
+            elif "4x6" in name:
+                masks[pad_index, row : row + 4, col : col + 6] = 1
+            else:  # pragma: no cover - canonical layout is fixed
+                raise ValueError(f"Unknown Xela pad type {name!r} with {count} taxels")
+        masks = F.interpolate(
+            masks.unsqueeze(1), size=(self.image_size, self.image_size), mode="nearest"
+        ).squeeze(1)
+        self.register_buffer("pad_masks", masks, persistent=False)
+        self.register_buffer("taxel_support", masks.amax(dim=0), persistent=False)
+        # A label lookup avoids an expensive [batch,pads,height,width]
+        # expansion for a physical batch of 1024.
+        background = len(XELA_FLATTEN_ORDER)
+        labels = torch.full((self.image_size, self.image_size), background, dtype=torch.long)
+        for pad_index, mask in enumerate(masks.bool()):
+            labels[mask] = pad_index
+        self.register_buffer("pad_labels", labels, persistent=False)
+
+    def forward(self, video: torch.Tensor) -> torch.Tensor:
+        if video.ndim != 5 or video.shape[1] != 3:
+            raise ValueError(f"Post-conv Xela augmentation expects [B,3,T,H,W], got {tuple(video.shape)}")
+        batch, channels, _, height, width = video.shape
+        if (height, width) != (self.image_size, self.image_size):
+            raise ValueError(f"Expected {self.image_size}x{self.image_size}, got {height}x{width}")
+        device, dtype = video.device, video.dtype
+        num_pads = len(XELA_FLATTEN_ORDER)
+        labels = self.pad_labels.reshape(1, -1).expand(batch, -1)
+        support = self.taxel_support.to(dtype=dtype)[None, None, None]
+
+        channel_gain = torch.empty(batch, channels, 1, 1, 1, device=device, dtype=dtype)
+        channel_gain.uniform_(*self.channel_gain_range)
+        video = video * channel_gain
+
+        pad_gains = torch.empty(batch, num_pads + 1, device=device, dtype=dtype)
+        pad_gains[:, :num_pads].uniform_(*self.pad_gain_range)
+        pad_gains[:, num_pads] = 1.0
+        gain_map = torch.gather(pad_gains, 1, labels).reshape(batch, 1, 1, height, width)
+        video = video * gain_map
+
+        if self.pad_offset_std > 0:
+            offsets = torch.randn(batch, channels, num_pads + 1, device=device, dtype=dtype)
+            offsets = offsets * self.pad_offset_std
+            offsets[:, :, num_pads] = 0
+            offset_map = torch.gather(
+                offsets, 2, labels[:, None].expand(batch, channels, height * width)
+            ).reshape(batch, channels, 1, height, width)
+            video = video + offset_map
+
+        if self.noise_std_range[1] > 0:
+            noise_std = torch.empty(batch, 1, 1, 1, 1, device=device, dtype=dtype)
+            noise_std.uniform_(*self.noise_std_range)
+            noise = torch.randn(batch, channels, 1, height, width, device=device, dtype=dtype)
+            video = video + noise * noise_std * support
+
+        if self.drop_pads[1] > 0:
+            counts = torch.randint(
+                self.drop_pads[0], self.drop_pads[1] + 1, (batch, 1), device=device
+            )
+            ranks = torch.rand(batch, num_pads, device=device).argsort(dim=1).argsort(dim=1)
+            keep_by_pad = torch.cat(
+                [(ranks >= counts).to(dtype), torch.ones(batch, 1, device=device, dtype=dtype)], dim=1
+            )
+            keep_map = torch.gather(keep_by_pad, 1, labels).reshape(batch, 1, 1, height, width)
+            video = video * keep_map
+
+        if self.crop_probability > 0 or self.blur_probability > 0:
+            video = torch.stack(
+                [TactileBYOLAugment._augment_one(self, sample) for sample in video], dim=0
+            )
+        return video
+
+
+class TactileBYOLModule(Module, nn.Module):
+    """BYOL over temporally reduced tactile atlases and an AlexNet backbone."""
+
+    def __init__(
+        self,
+        encoder: nn.Module,
+        optim_cfg: partial,
+        lr_scheduler_cfg: Optional[partial],
+        wd_scheduler_cfg: Optional[partial],
+        augment_fn: Optional[nn.Module] = None,
+        teacher_augment_fn: Optional[nn.Module] = None,
+        augment_after_temporal: bool = False,
+        projection_dim: int = 256,
+        projection_hidden_dim: int = 4096,
+        moving_average_decay: Union[float, Tuple[float, ...]] = 0.99,
+    ) -> None:
+        super().__init__()
+        self.online_encoder = encoder
+        self.target_encoder = copy.deepcopy(encoder).requires_grad_(False)
+        self.online_projector = MLP(encoder.embed_dim, projection_dim, projection_hidden_dim)
+        self.target_projector = copy.deepcopy(self.online_projector).requires_grad_(False)
+        self.online_predictor = MLP(projection_dim, projection_dim, projection_hidden_dim)
+        self.augment = augment_fn if augment_fn is not None else TactileBYOLAugment(encoder.image_size)
+        self.teacher_augment = teacher_augment_fn
+        self.augment_after_temporal = bool(augment_after_temporal)
+        self.optim_partial = optim_cfg
+        self.lr_scheduler_partial = lr_scheduler_cfg
+        self.wd_scheduler_partial = wd_scheduler_cfg
+
+        if not isinstance(moving_average_decay, float):
+            if not isinstance(moving_average_decay, (list, tuple, ListConfig)) or len(moving_average_decay) != 2:
+                raise ValueError("moving_average_decay must be a float or a two-value schedule")
+            moving_average_decay = tuple(float(value) for value in moving_average_decay)
+        self.moving_average_decay = moving_average_decay
+        self.momentum_scheduler = None
+        self._schedule_step = 0
+        self._schedule_total_steps = None
+
+    @staticmethod
+    def _pool(embeddings: torch.Tensor) -> torch.Tensor:
+        return embeddings.mean(dim=1)
+
+    def forward(self, sensor: torch.Tensor) -> torch.Tensor:
+        video = self.online_encoder.rasterize(sensor)
+        if not self.augment_after_temporal:
+            view_one, view_two = self.augment(video), self.augment(video)
+            online_view_one = target_view_one = view_one
+            online_view_two = target_view_two = view_two
+            online_forward = self.online_encoder.forward_video
+            target_forward = self.target_encoder.forward_video
+        else:
+            online_chunks = self.online_encoder.aggregate_video(video)
+            with torch.no_grad():
+                target_chunks = self.target_encoder.aggregate_video(video)
+            online_forward = self.online_encoder.forward_aggregated
+            target_forward = self.target_encoder.forward_aggregated
+            if self.teacher_augment is None:
+                # Same sampled corruption for online and EMA encoders, even
+                # though their learned temporal kernels may differ.
+                paired = torch.cat([online_chunks, target_chunks], dim=2)
+                split = online_chunks.shape[2]
+                pair_one, pair_two = self.augment(paired), self.augment(paired)
+                online_view_one, target_view_one = pair_one[:, :, :split], pair_one[:, :, split:]
+                online_view_two, target_view_two = pair_two[:, :, :split], pair_two[:, :, split:]
+            else:
+                online_view_one, online_view_two = self.augment(online_chunks), self.augment(online_chunks)
+                with torch.no_grad():
+                    target_view_one = self.teacher_augment(target_chunks)
+                    target_view_two = self.teacher_augment(target_chunks)
+
+        online_one = self.online_projector(self._pool(online_forward(online_view_one)))
+        online_two = self.online_projector(self._pool(online_forward(online_view_two)))
+        prediction_one = self.online_predictor(online_one)
+        prediction_two = self.online_predictor(online_two)
+        with torch.no_grad():
+            target_one = self.target_projector(self._pool(target_forward(target_view_one)))
+            target_two = self.target_projector(self._pool(target_forward(target_view_two)))
+        return (loss_fn(prediction_one, target_two) + loss_fn(prediction_two, target_one)).mean()
+
+    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict[str, Any]:
+        loss = self.forward(batch["sensor"])
+        return {"loss": loss, "ssl_loss": loss.detach().item()}
+
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict[str, Any]:
+        return self.training_step(batch, batch_idx)
+
+    def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
+        decay = next(self.momentum_scheduler) if self.momentum_scheduler is not None else self.moving_average_decay
+        with torch.no_grad():
+            update_moving_average(self.target_encoder, self.online_encoder, decay)
+            update_moving_average(self.target_projector, self.online_projector, decay)
+        self._schedule_step += 1
+        if trainer_instance is not None and trainer_instance.should_log:
+            trainer_instance.writer.add_scalar("train/ssl_loss", outputs["ssl_loss"], trainer_instance.global_step)
+            trainer_instance.writer.add_scalar("train/moving_average_decay", decay, trainer_instance.global_step)
+
+    def on_validation_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
+        if trainer_instance is not None and trainer_instance.should_log:
+            trainer_instance.writer.add_scalar("val/ssl_loss", outputs["ssl_loss"], trainer_instance.global_val_step)
+
+    def configure_optimizers(self, num_iterations_per_epoch, num_epochs):
+        trainable = {name: value for name, value in self.named_parameters() if value.requires_grad}
+        decay = [value for value in trainable.values() if value.dim() >= 2]
+        no_decay = [value for value in trainable.values() if value.dim() < 2]
+        optimizer = self.optim_partial(
+            [
+                {"params": decay},
+                {"params": no_decay, "WD_exclude": True, "weight_decay": 0.0},
+            ]
+        )
+        total_steps = int(num_epochs * num_iterations_per_epoch)
+        self._schedule_total_steps = total_steps
+        self._reset_momentum_schedule(0)
+        if self.lr_scheduler_partial is None:
+            return optimizer, None, None
+        lr_scheduler = self.lr_scheduler_partial(
+            optimizer=optimizer,
+            T_max=total_steps,
+            steps_per_epoch=num_iterations_per_epoch,
+        )
+        lr_cfg = {"scheduler": lr_scheduler, "interval": "step", "monitor": None}
+        if self.wd_scheduler_partial is None:
+            return optimizer, lr_cfg, None
+        wd_scheduler = self.wd_scheduler_partial(optimizer, T_max=total_steps)
+        return optimizer, lr_cfg, {"wd_scheduler": wd_scheduler, "interval": "step", "frequency": 1}
+
+    def _reset_momentum_schedule(self, start_step: int) -> None:
+        if self._schedule_total_steps is None:
+            raise RuntimeError("Momentum schedule has not been configured")
+        self._schedule_step = int(start_step)
+        if isinstance(self.moving_average_decay, tuple):
+            start, end = self.moving_average_decay
+            total = max(self._schedule_total_steps, 1)
+            self.momentum_scheduler = (
+                start + step * (end - start) / total
+                for step in range(self._schedule_step, self._schedule_total_steps + 1)
+            )
+
+    def get_checkpoint_state(self) -> Dict[str, Any]:
+        return {"schedule_step": self._schedule_step, "schedule_total_steps": self._schedule_total_steps}
+
+    def load_checkpoint_state(self, state, global_step: int, current_epoch: int) -> None:
+        start_step = global_step if state is None else int(state["schedule_step"])
+        if state is not None and int(state["schedule_total_steps"]) != self._schedule_total_steps:
+            raise RuntimeError("BYOL total schedule length changed since the checkpoint was created")
+        self._reset_momentum_schedule(start_step)

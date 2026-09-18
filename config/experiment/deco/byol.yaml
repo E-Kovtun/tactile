@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - override /paths: deco
+  - override /tensorboard: tensorboard_config
+  - override /data: deco_task4_cached
+  - override /algorithm: deco_byol
+  - _self_
+model_size: tiny
+ckpt_path: null
+task_name: pretrain_deco_task4_encoder
+ssl_name: byol
+experiment_name: ${task_name}_${ssl_name}
+seed: 42
+run_name: alexnet_temporal_conv
+trainer:
+  max_epochs: 150
+  validation_frequency: 5
+  checkpoint_frequency: 50
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints

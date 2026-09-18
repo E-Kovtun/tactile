@@ -1,0 +1,33 @@
+# @package _global_
+defaults:
+  - /experiment/xela/byol_temporal
+  - _self_
+
+# T-DEx-style optimization and spatial augmentation, while retaining the
+# Xela-specific learned Conv3d aggregation over each 10-frame input window.
+run_name: alexnet_temporal_conv_192_paperlike_b1024
+
+trainer:
+  max_epochs: 50
+  grad_accum_steps: 1
+  validation_frequency: 5
+  checkpoint_frequency: 5
+
+data:
+  train_dataloader:
+    batch_size: 1024
+  val_dataloader:
+    batch_size: 1024
+
+algorithm:
+  augment_fn:
+    # torchvision's default RandomResizedCrop aspect-ratio range, as used by
+    # the official tactile-dexterity augmentation implementation.
+    crop_ratio: [0.75, 1.3333333333333333]
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.Adam
+    lr: 1.0e-3
+    weight_decay: 1.0e-5
+  lr_scheduler_cfg: null
+  wd_scheduler_cfg: null
