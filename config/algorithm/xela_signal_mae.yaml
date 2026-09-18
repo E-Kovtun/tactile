@@ -1,0 +1,51 @@
+_target_: tactile_ssl.algorithm.SignalMAEModule
+encoder:
+  _target_: tactile_ssl.model.xela_${model_size}
+  in_dim: 368
+  in_chans: 3
+  sequence_length: ${int_multiply:${data.window_time},${data.interpolating_freq}}
+  time_chunk_size: ${algorithm.encoder.sequence_length}
+  num_register_tokens: 1
+  pos_embed_fn: learned
+  with_masktoken: false
+  drop_path_rate: 0.3
+  drop_path_uniform: true
+  normalization: ${data.normalization}
+  causal: false
+mask_type: random
+mask_ratio: 0.75
+decoder:
+  _target_: tactile_ssl.probe.reconstruction.SignalMaskDecoder
+  in_dim: ${algorithm.encoder.in_dim}
+  in_chans: ${algorithm.encoder.in_chans}
+  sequence_length: ${algorithm.encoder.sequence_length}
+  time_chunk_size: ${algorithm.encoder.time_chunk_size}
+  input_embed_dim: ${model_embed_dim}
+  embed_dim: 192
+  depth: 4
+  num_heads: 12
+  pos_embed_fn: sinusoidal
+  mlp_ratio: 4.0
+  qkv_bias: true
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  weight_decay: 0.05
+lr_scheduler_cfg:
+  _partial_: true
+  _target_: tactile_ssl.model.custom_scheduler.WarmupCosineScheduler
+  steps_per_epoch: ???
+  T_max: ???
+  final_lr: 1.0e-6
+  start_lr: 1.0e-5
+  warmup_epochs: 30
+wd_scheduler_cfg:
+  _partial_: true
+  _target_: tactile_ssl.model.custom_scheduler.CosineWDSchedule
+  final_weight_decay: 0.4
+  ref_weight_decay: 0.04
+  T_max: ???
+online_probes: []
+online_probes_lrs: []
+

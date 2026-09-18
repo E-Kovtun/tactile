@@ -26,6 +26,7 @@ class MAEModule(Module, nn.Module):
         use_momentum=True,
         norm_pix_loss: bool = False,
         reconstruction_log_freq: int = 1000,
+        require_patch_embed: bool = True,
     ):
         super().__init__()
         self.optim_partial = optim_cfg
@@ -51,7 +52,8 @@ class MAEModule(Module, nn.Module):
 
         # MAE Encoder
         self.encoder = encoder
-        assert hasattr(self.encoder, "patch_embed"), "Encoder must have patch_embed module"
+        if require_patch_embed and not hasattr(self.encoder, "patch_embed"):
+            raise AssertionError("Encoder must have patch_embed module")
         # MAE Decoder
         self.decoder = decoder
 
