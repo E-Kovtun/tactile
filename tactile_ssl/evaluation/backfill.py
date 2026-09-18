@@ -118,6 +118,15 @@ def _loaders_for_task(task: str, cfg: DictConfig):
 def _prepare_config(config_path: Path, run_root: Path, checkpoint: Path) -> DictConfig:
     cfg = OmegaConf.load(config_path)
     with open_dict(cfg):
+        # Saved Hydra configs retain ``${hydra:runtime.cwd}``, but backfill is a
+        # plain Python entrypoint with no active Hydra runtime. Resolve the
+        # original project root explicitly before dataset/cache interpolation.
+        OmegaConf.update(
+            cfg,
+            "paths.work_dir",
+            str(Path(__file__).resolve().parents[2]),
+            force_add=True,
+        )
         OmegaConf.update(cfg, "paths.output_dir", str(run_root), force_add=True)
         OmegaConf.update(cfg, "trainer.save_checkpoint_dir", str(run_root / "checkpoints"), force_add=True)
         OmegaConf.update(cfg, "ckpt_path", None, force_add=True)

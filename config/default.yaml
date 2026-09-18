@@ -49,6 +49,8 @@ trainer:
   max_epochs: ~
   grad_clip_norm: 10.0
   validation_frequency: 10
-  checkpoint_frequency: 10
+  # Keep a rolling last.ckpt for recovery; retain numbered pretrain
+  # checkpoints only at epochs 50, 100, ... to limit NFS usage.
+  checkpoint_frequency: 50
   log_frequency: 500
   save_checkpoint_dir: ${paths.output_dir}/checkpoints

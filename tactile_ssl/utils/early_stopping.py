@@ -51,3 +51,28 @@ class EarlyStopping:
         if self.verbose:
             self.trace_func(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f})')
         self.val_loss_min = val_loss
+
+    def state_dict(self):
+        """Return the patience state needed for an exact training resume."""
+        def scalar(value):
+            if value is None:
+                return None
+            if isinstance(value, torch.Tensor):
+                return float(value.detach().cpu().item())
+            return float(value)
+
+        return {
+            "counter": int(self.counter),
+            "best_val_loss": scalar(self.best_val_loss),
+            "early_stop": bool(self.early_stop),
+            "val_loss_min": scalar(self.val_loss_min),
+            "save_checkpoint_flag": bool(self.save_checkpoint_flag),
+        }
+
+    def load_state_dict(self, state):
+        """Restore patience without changing the configured patience/delta."""
+        self.counter = int(state.get("counter", 0))
+        self.best_val_loss = state.get("best_val_loss")
+        self.early_stop = bool(state.get("early_stop", False))
+        self.val_loss_min = float(state.get("val_loss_min", np.inf))
+        self.save_checkpoint_flag = bool(state.get("save_checkpoint_flag", False))

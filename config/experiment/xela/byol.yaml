@@ -20,5 +20,5 @@ run_name: byol
 trainer:
   max_epochs: 500
   validation_frequency: 5
-  checkpoint_frequency: 20
+  checkpoint_frequency: 50
   save_checkpoint_dir: ${paths.output_dir}/checkpoints

@@ -68,7 +68,7 @@ wandb:
 trainer:
   max_epochs: 200
   validation_frequency: 5
-  checkpoint_frequency: 25
+  checkpoint_frequency: 50
   log_frequency: 50
   grad_clip_norm: 10.0
 

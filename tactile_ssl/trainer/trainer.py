@@ -558,11 +558,24 @@ class Trainer:
 
         module = self._unwrap_module(module)
 
-        if (ckpt_path_to_eval is None) and self.use_early_stopping:
-            ckpt_path_to_eval = os.path.join(self.checkpoint_dir, f"{self.early_stopping_checkpoint_name}.ckpt")
+        if ckpt_path_to_eval is None:
+            if self.use_early_stopping:
+                ckpt_path_to_eval = os.path.join(
+                    self.checkpoint_dir,
+                    f"{self.early_stopping_checkpoint_name}.ckpt",
+                )
+            elif self.state is not None:
+                # ``fit`` saves the complete final downstream state after every
+                # epoch.  Non-early-stopped runs should evaluate that durable
+                # checkpoint instead of rejecting the fitted model or relying on
+                # whichever in-memory weights happen to remain.
+                ckpt_path_to_eval = self.get_latest_checkpoint(self.checkpoint_dir)
 
         if ckpt_path_to_eval is None:
-            raise ValueError("A downstream checkpoint is required for evaluation")
+            raise ValueError(
+                "A downstream checkpoint is required for evaluation-only runs; "
+                "pass ckpt_path_to_eval explicitly"
+            )
         self.evaluation_checkpoint_path = str(ckpt_path_to_eval)
         module.load_task(ckpt_path_to_eval)
         self.test_loop(module, test_loader)
@@ -747,12 +760,19 @@ class Trainer:
 
         scheduler_state = remainder.pop("scheduler", None)
         wd_scheduler_state = remainder.pop("wd_scheduler", None)
+        early_stopping_state = remainder.pop("early_stopping", None)
         self._restore_scheduler(
             scheduler_cfg,
             scheduler_state,
             object_key="scheduler",
             checkpoint_version=checkpoint_version,
         )
+
+        if self.use_early_stopping and early_stopping_state is not None:
+            self.early_stopping.load_state_dict(early_stopping_state)
+            log.info("Restored early-stopping state from checkpoint")
+        elif not self.use_early_stopping and early_stopping_state is not None:
+            log.warning("Ignoring checkpoint early-stopping state because it is disabled")
         self._restore_scheduler(
             wd_scheduler_cfg,
             wd_scheduler_state,
@@ -864,6 +884,11 @@ class Trainer:
                 else None
             ),
             algorithm_state=self._checkpoint_module.get_checkpoint_state(),
+            early_stopping=(
+                self.early_stopping.state_dict()
+                if self.use_early_stopping
+                else None
+            ),
         )
         return checkpoint_state
 
