@@ -29,6 +29,7 @@ from tactile_ssl.utils.logging import get_pylogger, print_config_tree  # noqa: E
 from tactile_ssl.data.d360.utils import get_weights, get_experiment_name, get_modality_tag
 from tactile_ssl.utils.combined_dataset import CombinedDataset
 from tactile_ssl.data.xela.preprocessing import compute_cached_xela_normalization
+from tactile_ssl.data.subsets import deterministic_nested_fractional_subsets
 
 logger = get_pylogger(__name__)
 
@@ -131,6 +132,24 @@ def get_dataloaders_magnetic_based(cfg: DictConfig):
 
         for dataset in train_datasets + val_datasets + test_datasets:
             dataset.update_normalization(xela_mean, xela_std)
+
+        full_train_size = sum(len(dataset) for dataset in train_datasets)
+        train_data_budget = float(data_cfg.get("train_data_budget", 1.0))
+        subset_seed = int(cfg.get("data_seed", cfg.seed))
+        train_datasets = deterministic_nested_fractional_subsets(
+            train_datasets,
+            fraction=train_data_budget,
+            seed=subset_seed,
+        )
+        selected_train_size = sum(len(dataset) for dataset in train_datasets)
+        logger.info(
+            "Xela object train budget: requested=%.4f selected=%d/%d (%.4f), seed=%d",
+            train_data_budget,
+            selected_train_size,
+            full_train_size,
+            selected_train_size / full_train_size,
+            subset_seed,
+        )
         train_dset = data.ConcatDataset(train_datasets)
         val_dset = data.ConcatDataset(val_datasets)
         test_dset = data.ConcatDataset(test_datasets)
