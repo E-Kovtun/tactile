@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - deco/dinov2_direct_shuffle
+  - _self_
+
+run_name: deco-dino-cls-only-b64-20ep-s42
+trainer:
+  max_epochs: 20
+  checkpoint_frequency: 5
+algorithm:
+  ibot_enabled: false
+  collapse_diagnostics_every: 50
+  # Preserve the first 20 epochs of baseline LR, WD and EMA schedules.
+  schedule_epochs: 150

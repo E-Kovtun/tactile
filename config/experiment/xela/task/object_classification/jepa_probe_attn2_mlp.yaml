@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - /experiment/xela/task/object_classification/jepa
+  - _self_
+
+task:
+  model_task:
+    _target_: tactile_ssl.downstream_task.XelaObjectTokenMLPClassifier
+    input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    classes: ${data.object_classes}
+    class_weights: ${data.object_class_weights}
+    pooling_type: attention
+    num_heads: 2
+    hidden_dim: 48

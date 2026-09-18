@@ -1,0 +1,31 @@
+# @package _global_
+defaults:
+  - /experiment/xela/byol
+  - _self_
+
+# T-DEx-like BYOL baseline on one instantaneous midpoint frame per 10-frame
+# block. Views are generated independently per sample by DataLoader workers.
+run_name: xela_byol_instantaneous_paperlike_b1024_ema099
+
+trainer:
+  max_epochs: 500
+  grad_accum_steps: 1
+  validation_frequency: 5
+  checkpoint_frequency: 5
+
+data:
+  train_dataloader:
+    batch_size: 1024
+  val_dataloader:
+    batch_size: 1024
+
+algorithm:
+  use_precomputed_views: true
+  moving_average_decay: 0.99
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.Adam
+    lr: 1.0e-3
+    weight_decay: 1.0e-5
+  lr_scheduler_cfg: null
+  wd_scheduler_cfg: null

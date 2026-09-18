@@ -1,7 +1,0 @@
-# @package _global_
-defaults:
-  - /experiment/sock/ijepa_action_2d_20260910
-  - _self_
-
-algorithm:
-  target_mask_scale: [0.05, 0.09]

@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - override /paths: sock
+  - override /data: sock_action
+  - override /task: sock_action_classification
+  - _self_
+
+ssl_name: mae
+ssl_model_size: tiny
+run_name: visible_random75_seed${seed}
+
+task:
+  checkpoint_encoder: ???
+  encoder_type: mae
+  model_encoder:
+    num_register_tokens: 1
+    with_masktoken: false

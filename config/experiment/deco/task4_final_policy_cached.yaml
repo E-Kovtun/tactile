@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - override /paths: deco
+  - override /tensorboard: tensorboard_config
+  - override /data: deco_task4_final_cached
+  - override /task: deco_final_sparsh_policy
+  - _self_
+
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+seed: 42
+ckpt_path: null
+task_name: deco_task4_hands_policy
+ssl_name: jepa
+experiment_name: ${task_name}_${ssl_name}
+run_name: hands_only_frozen_resnet18_imagenet_gap
+
+trainer:
+  max_epochs: 50
+  validation_frequency: 2
+  checkpoint_frequency: 5
+  early_stopping_enabled: true
+  early_stopping_patience: 5
+  early_stopping_delta: 1.0e-4
+  early_stopping_checkpoint_name: best
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints

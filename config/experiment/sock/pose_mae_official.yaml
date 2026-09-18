@@ -1,0 +1,21 @@
+# @package _global_
+defaults:
+  - override /paths: sock
+  - override /data: sock_pose
+  - override /task: sock_pose_jepa_official
+  - _self_
+
+ssl_name: mae
+ssl_model_size: tiny
+run_name: visible_random75_seed${seed}
+
+data:
+  dataset:
+    mode: jepa_official
+
+task:
+  checkpoint_encoder: ???
+  encoder_type: mae
+  model_encoder:
+    num_register_tokens: 1
+    with_masktoken: false

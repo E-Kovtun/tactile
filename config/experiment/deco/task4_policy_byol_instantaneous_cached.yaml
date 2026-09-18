@@ -1,0 +1,23 @@
+# @package _global_
+defaults:
+  - /experiment/deco/task4_final_policy_cached
+  - _self_
+
+ssl_name: byol
+experiment_name: ${task_name}_${ssl_name}
+run_name: cached_resnet18_gap_alexnet_instantaneous_midpoint_seed${seed}
+
+task:
+  model:
+    tactile_encoder:
+      _target_: tactile_ssl.model.InstantaneousTactileAlexNet
+      rasterizer:
+        _target_: tactile_ssl.model.DecoTactileRasterizer
+      sequence_length: 3
+      frame_index: 1
+      pretrained: false
+      image_size: 224
+    policy_head:
+      tactile_embed_dim: 9216
+    checkpoint_encoder: ???
+    encoder_checkpoint_key: target_encoder

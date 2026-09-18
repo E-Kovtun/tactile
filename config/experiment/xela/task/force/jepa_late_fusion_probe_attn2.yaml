@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /experiment/xela/task/force/jepa_late_fusion
+  - _self_
+
+task:
+  model_task:
+    pooling_type: attention
+    num_heads: 2

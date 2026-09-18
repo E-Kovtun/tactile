@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - /experiment/sock/jepa_source_pose_only
+  - _self_
+
+run_name: source_pose_only_2local2random_footbound_500ep
+
+data:
+  graph_mask_collator:
+    target_specs:
+      - {foot: 0, strategy: connected_region}
+      - {foot: 0, strategy: random}
+      - {foot: 1, strategy: connected_region}
+      - {foot: 1, strategy: random}

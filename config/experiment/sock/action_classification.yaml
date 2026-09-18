@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - override /paths: sock
+  - override /data: sock_action
+  - override /task: sock_action_classification
+  - _self_
+
+run_name: temporal_9x5_recording_split

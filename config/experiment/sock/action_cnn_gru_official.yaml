@@ -1,0 +1,25 @@
+# @package _global_
+defaults:
+  - override /paths: sock
+  - override /data: sock_action
+  - override /task: sock_action_cnn_gru
+  - _self_
+
+data:
+  dataset:
+    split_protocol: aaai_window
+    aaai_val_per_class: 500
+    aaai_test_per_class: 1000
+    aaai_train_per_class: 4000
+    include_grids: true
+    normalize_inputs: true
+    normalization_mean: 536.4649528748312
+    normalization_std: 46.81434484100088
+  train_dataloader:
+    batch_size: 32
+  val_dataloader:
+    batch_size: 32
+  test_dataloader:
+    batch_size: 32
+
+run_name: released_cnn_bigru_seed${seed}
