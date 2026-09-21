@@ -52,7 +52,20 @@ The paper evaluates three existing datasets:
 | [Tactile socks](https://senstextile.csail.mit.edu/) | Knitted pressure sensors / human feet | 237 + 216 | 1 | 14 Hz | 5 | Action classification, full-body pose |
 | [DECO-50](https://huggingface.co/datasets/BAAI-Humanoid/DECO-50) | Inspire FTP / two Inspire hands | 1062 per hand | 1 | 30 Hz | 3 | Visuo-tactile policy learning |
 
-Download Sparsh-skin and DECO-50 from their Hugging Face pages above. For Tactile socks, use the official [SensTextile dataset archive](https://www.dropbox.com/sh/g70n60jfutzd0l5/AACnOgtLUG8tHbU8TLn5MBFba?dl=0); its [code release](https://github.com/YunzhuLi/senstextile) also links the task-specific classification and pose files. Arrange the downloaded files as shown below. For Sparsh-skin, place the release's `pretraining/` contents under `xela/pretraining/extracted/` and keep `downstream_tasks/` at the dataset root.
+Download and arrange all three datasets with:
+
+```bash
+python scripts/download_datasets.py
+```
+
+Use `--dataset` once or twice to download only the datasets you need:
+
+```bash
+python scripts/download_datasets.py --dataset xela
+python scripts/download_datasets.py --dataset socks --dataset deco
+```
+
+The script downloads the official releases linked above, keeps only DECO-50 task 4, and places everything under `datasets/`. Use `--root /path/to/datasets` to choose another location.
 
 ### Data preparation
 
@@ -167,6 +180,7 @@ config/                 Experiment presets and common paths
 tactile_ssl/            Data loaders, encoders, objectives, task heads, and trainer
 train.py                Self-supervised pretraining
 train_task_*.py          Downstream training and evaluation
+scripts/download_datasets.py Download and arrange the paper datasets
 scripts/prepare_data.py Prepare DECO manifests and caches
 assets/                 README figures and Socks sensor geometry
 ```
