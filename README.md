@@ -8,7 +8,7 @@ Code accompanying the Tactile-JEPA paper. Tactile-JEPA learns reusable represent
 | --- | --- |
 | Paper / arXiv | TODO: add link |
 | Pretrained models | TODO: add link |
-| Datasets and download instructions | TODO: add links |
+| Datasets | [Downloads and preparation](#datasets) |
 
 <p align="center">
   <img src="assets/readme/tactile_jepa_teaser.png" alt="Tactile-JEPA maps distributed tactile signals to topology-aware per-taxel embeddings using the taxel graph during pretraining." width="650">
@@ -48,11 +48,11 @@ The paper evaluates three existing datasets:
 
 | Dataset | Sensor / embodiment | Taxels | Channels per taxel | Sampling rate | Frames per window | Downstream tasks |
 | --- | --- | --- | --- | --- | --- | --- |
-| Sparsh-skin | Xela uSkin / Allegro hand | 368 | 3 | 100 Hz | 10 | Force, in-hand pose, object classification |
-| Tactile socks | Knitted pressure sensors / human feet | 237 + 216 | 1 | 14 Hz | 5 | Action classification, full-body pose |
-| DECO-50 | Inspire FTP / two Inspire hands | 1062 per hand | 1 | 30 Hz | 3 | Visuo-tactile policy learning |
+| [Sparsh-skin](https://huggingface.co/datasets/facebook/sparsh-skin-dataset) | Xela uSkin / Allegro hand | 368 | 3 | 100 Hz | 10 | Force, in-hand pose, object classification |
+| [Tactile socks](https://senstextile.csail.mit.edu/) | Knitted pressure sensors / human feet | 237 + 216 | 1 | 14 Hz | 5 | Action classification, full-body pose |
+| [DECO-50](https://huggingface.co/datasets/BAAI-Humanoid/DECO-50) | Inspire FTP / two Inspire hands | 1062 per hand | 1 | 30 Hz | 3 | Visuo-tactile policy learning |
 
-**Downloads:** TODO: add dataset links and release-specific preparation instructions.
+Download Sparsh-skin and DECO-50 from their Hugging Face pages above. For Tactile socks, use the official [SensTextile dataset archive](https://www.dropbox.com/sh/g70n60jfutzd0l5/AACnOgtLUG8tHbU8TLn5MBFba?dl=0); its [code release](https://github.com/YunzhuLi/senstextile) also links the task-specific classification and pose files. Arrange the downloaded files as shown below. For Sparsh-skin, place the release's `pretraining/` contents under `xela/pretraining/extracted/` and keep `downstream_tasks/` at the dataset root.
 
 ### Data preparation
 
