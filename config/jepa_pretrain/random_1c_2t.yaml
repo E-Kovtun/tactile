@@ -1,3 +1,0 @@
-display_name: JEPA random (1, 2)
-run_name: jepa_random_1c_2t
-checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/context_random_target_random_2026.07.03_21-54/checkpoints/epoch-0500.ckpt

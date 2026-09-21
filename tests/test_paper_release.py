@@ -20,12 +20,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_public_configurations_are_portable():
-    catalog = json.loads((ROOT/'config/paper/catalog.json').read_text())
+    config_root = ROOT / 'config'
+    presets = sorted(p.relative_to(config_root).with_suffix('').as_posix()
+                     for dataset in ('xela', 'socks', 'deco')
+                     for p in (config_root / dataset).rglob('*.yaml'))
+    assert presets
     OmegaConf.register_new_resolver('int_multiply',lambda a,b:int(a*b),replace=True)
     OmegaConf.register_new_resolver('join',lambda s,x:s.join(map(str,x)),replace=True)
-    with initialize_config_dir(version_base='1.3',config_dir=str(ROOT/'config/paper')):
-        for name, metadata in catalog.items():
-            assert metadata["entrypoint"] in ("train.py", "train_task_force.py", "train_task_object.py", "train_task_pose_estimation.py", "train_task_socks_action.py", "train_task_socks_pose.py", "train_task_deco_policy.py")
+    with initialize_config_dir(version_base='1.3',config_dir=str(ROOT/'config')):
+        for name in presets:
             cfg=compose(config_name=name,overrides=['paths.data_root=/portable/data','paths.cache_root=/portable/cache','checkpoint=/portable/encoder.ckpt'])
             cfg.paths.output_dir='/portable/output'
             cfg.paths.work_dir='/portable/repo'

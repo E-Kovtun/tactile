@@ -1,1 +1,0 @@
-log_dir: ${hydra:runtime.output_dir}/tensorboard

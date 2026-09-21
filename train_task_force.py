@@ -394,7 +394,7 @@ def train(cfg: DictConfig):
 
 
 # @hydra.main(version_base="1.3", config_path="config")
-@hydra.main(version_base="1.3", config_path="config", config_name="default_task.yaml")
+@hydra.main(version_base="1.3", config_path="config", config_name="xela/force/jepa")
 def main(cfg: DictConfig):
     """
     Main function to train the model

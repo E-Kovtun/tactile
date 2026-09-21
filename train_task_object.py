@@ -148,7 +148,7 @@ def train(cfg: DictConfig):
     train_downstream(cfg, get_dataloaders, evaluate_saved_checkpoint=True)
 
 
-@hydra.main(version_base="1.3", config_path="config", config_name="default_task.yaml")
+@hydra.main(version_base="1.3", config_path="config", config_name="xela/object/jepa")
 def main(cfg: DictConfig):
     """
     Main function to train the model

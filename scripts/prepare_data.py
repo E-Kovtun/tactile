@@ -90,8 +90,8 @@ def prepare(root: Path, cache: Path, stage: str, device: str, workers: int):
                   '--num-workers', str(workers)]
         vision = ['--source-root', str(cache / 'policy'), '--source-manifest', str(cache / 'policy/manifest.json'),
                   '--output-root', str(cache / 'vision'), '--device', device]
-        for module, args in [('scripts.paper.policy_cache', shared),
-                             ('scripts.paper.vision_cache', vision)]:
+        for module, args in [('scripts.data.policy_cache', shared),
+                             ('scripts.data.vision_cache', vision)]:
             for mode in ('build', 'finalize'):
                 subprocess.run([sys.executable, '-m', module, mode, *args], cwd=ROOT, check=True)
     print('Ready:', cache, flush=True)

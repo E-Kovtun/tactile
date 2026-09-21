@@ -1,3 +1,0 @@
-display_name: JEPA contiguous (1, 2)
-run_name: jepa_contiguous_1c_2t
-checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/2026.07.01_18-26/checkpoints/epoch-0500.ckpt

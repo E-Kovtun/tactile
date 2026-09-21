@@ -28,7 +28,7 @@ def train(cfg: DictConfig):
     train_downstream(cfg, get_dataloaders, evaluate_saved_checkpoint=True)
 
 
-@hydra.main(version_base="1.3", config_path="config/paper", config_name="socks/action/downstream/jepa")
+@hydra.main(version_base="1.3", config_path="config", config_name="socks/action/downstream/jepa")
 def main(cfg: DictConfig):
     train(cfg)
 

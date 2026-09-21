@@ -94,29 +94,29 @@ python scripts/prepare_data.py deco --stage policy
 
 DECO artifacts are stored in `cache/deco/` and reused across runs. The tactile cache does not require decoding images. Policy preparation needs additional disk space for image shards and automatically downloads ImageNet ResNet18 weights on first use; add `--device cpu` to extract features without a GPU. Use `--stage all` to prepare everything.
 
-Defaults are set in `config/paper/common.yaml`. For data stored elsewhere, pass `paths.xela=...`, `paths.socks=...`, or `paths.deco=...` to training. For DECO, use matching data and cache paths during preparation and training:
+Defaults are set in `config/common.yaml`. For data stored elsewhere, pass `paths.xela=...`, `paths.socks=...`, or `paths.deco=...` to training. For DECO, use matching data and cache paths during preparation and training:
 
 ```bash
 python scripts/prepare_data.py deco --stage all --root /data/deco/task4 --cache /data/cache/deco
-python train.py --config-path config/paper --config-name deco/pretrain/jepa paths.deco=/data/deco/task4 paths.deco_cache=/data/cache/deco
+python train.py --config-name deco/pretrain/jepa paths.deco=/data/deco/task4 paths.deco_cache=/data/cache/deco
 ```
 
 ## Training
 
-Configurations are organized by dataset, task, and method under `config/paper/`. List the available presets or inspect a configuration without training:
+Configurations are organized by dataset, task, and method under `config/`. List the available presets or inspect a configuration without training:
 
 ```bash
-find config/paper/{xela,socks,deco} -name "*.yaml" | sort
-python train.py --config-path config/paper --config-name xela/pretrain/jepa --cfg job
+find config/{xela,socks,deco} -name "*.yaml" | sort
+python train.py --config-name xela/pretrain/jepa --cfg job
 ```
 
 ### Self-supervised pretraining
 
 ```bash
-python train.py --config-path config/paper --config-name xela/pretrain/jepa
-python train.py --config-path config/paper --config-name socks/action/pretrain/jepa
-python train.py --config-path config/paper --config-name socks/pose/pretrain/jepa
-python train.py --config-path config/paper --config-name deco/pretrain/jepa
+python train.py --config-name xela/pretrain/jepa
+python train.py --config-name socks/action/pretrain/jepa
+python train.py --config-name socks/pose/pretrain/jepa
+python train.py --config-name deco/pretrain/jepa
 ```
 
 ### Downstream tasks
@@ -124,12 +124,12 @@ python train.py --config-path config/paper --config-name deco/pretrain/jepa
 Sparsh-skin uses the force, object, and pose entrypoints; Socks has separate action and pose entrypoints, and DECO uses its policy entrypoint. Set `checkpoint` to the matching pretrained encoder:
 
 ```bash
-python train_task_force.py --config-path config/paper --config-name xela/force/jepa checkpoint=/path/to/xela.ckpt
-python train_task_object.py --config-path config/paper --config-name xela/object/jepa checkpoint=/path/to/xela.ckpt
-python train_task_pose_estimation.py --config-path config/paper --config-name xela/pose/jepa checkpoint=/path/to/xela.ckpt
-python train_task_socks_action.py --config-path config/paper --config-name socks/action/downstream/jepa checkpoint=/path/to/socks-action.ckpt
-python train_task_socks_pose.py --config-path config/paper --config-name socks/pose/downstream/jepa checkpoint=/path/to/socks-pose.ckpt
-python train_task_deco_policy.py --config-path config/paper --config-name deco/policy/jepa checkpoint=/path/to/deco.ckpt
+python train_task_force.py --config-name xela/force/jepa checkpoint=/path/to/xela.ckpt
+python train_task_object.py --config-name xela/object/jepa checkpoint=/path/to/xela.ckpt
+python train_task_pose_estimation.py --config-name xela/pose/jepa checkpoint=/path/to/xela.ckpt
+python train_task_socks_action.py --config-name socks/action/downstream/jepa checkpoint=/path/to/socks-action.ckpt
+python train_task_socks_pose.py --config-name socks/pose/downstream/jepa checkpoint=/path/to/socks-pose.ckpt
+python train_task_deco_policy.py --config-name deco/policy/jepa checkpoint=/path/to/deco.ckpt
 ```
 
 Outputs, checkpoints, and evaluation artifacts are written under `outputs/` in a separate directory for each run; override it with `paths.logs=...`. DECO policy presets train directly for 150 epochs with one learning-rate schedule.
@@ -139,9 +139,9 @@ Outputs, checkpoints, and evaluation artifacts are written under `outputs/` in a
 Presets include `dino`, `mae`, `byol`, and `e2e`, plus `local`, `global`, `local_context`, and `ijepa` masking variants. For example:
 
 ```bash
-python train.py --config-path config/paper --config-name xela/pretrain/dino
-python train.py --config-path config/paper --config-name xela/pretrain/local
-python train.py --config-path config/paper --config-name deco/pretrain/ijepa
+python train.py --config-name xela/pretrain/dino
+python train.py --config-name xela/pretrain/local
+python train.py --config-name deco/pretrain/ijepa
 ```
 
 `local` and `global` use single-scale targets; `local_context` uses connected context; `ijepa` uses rectangular masks. To evaluate an ablation, pass its encoder checkpoint to the matching JEPA downstream preset. `e2e` trains from scratch and does not need a pretrained checkpoint. Available methods vary by task; the configuration filenames show the supported combinations.
@@ -159,7 +159,7 @@ Tactile socks encoders are pretrained separately on each task's training subset.
 ## Repository structure
 
 ```text
-config/paper/            Public experiment presets and common paths
+config/                 Experiment presets and common paths
   xela/                 Pretraining, force, object, and pose tasks
   socks/                Action and pose experiments
   deco/                 Pretraining and policy learning

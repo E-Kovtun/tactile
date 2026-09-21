@@ -1,3 +1,0 @@
-display_name: JEPA (2, 4) — epoch 500
-run_name: jepa_2c_4t_epoch500
-checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/2026.06.30_18-18/checkpoints/epoch-0500.ckpt
