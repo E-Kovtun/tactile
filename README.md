@@ -46,11 +46,11 @@ python -m pip install -e .
 
 The paper evaluates three existing datasets:
 
-| Dataset | Sensor / embodiment | Taxels | Channels per taxel | Sampling rate | Frames per window | Downstream tasks |
-| --- | --- | --- | --- | --- | --- | --- |
-| [Sparsh-skin](https://huggingface.co/datasets/facebook/sparsh-skin-dataset) | Xela uSkin / Allegro hand | 368 | 3 | 100 Hz | 10 | Force, in-hand pose, object classification |
-| [Tactile socks](https://senstextile.csail.mit.edu/) | Knitted pressure sensors / human feet | 237 + 216 | 1 | 14 Hz | 5 | Action classification, full-body pose |
-| [DECO-50](https://huggingface.co/datasets/BAAI-Humanoid/DECO-50) | Inspire FTP / two Inspire hands | 1062 per hand | 1 | 30 Hz | 3 | Visuo-tactile policy learning |
+| Dataset | Download size | Sensor / embodiment | Taxels | Channels per taxel | Sampling rate | Frames per window | Downstream tasks |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [Sparsh-skin](https://huggingface.co/datasets/facebook/sparsh-skin-dataset) | 54.3 GB | Xela uSkin / Allegro hand | 368 | 3 | 100 Hz | 10 | Force, in-hand pose, object classification |
+| [Tactile socks](https://senstextile.csail.mit.edu/) | 5.6 GB | Knitted pressure sensors / human feet | 237 + 216 | 1 | 14 Hz | 5 | Action classification, full-body pose |
+| [DECO-50](https://huggingface.co/datasets/BAAI-Humanoid/DECO-50) | 456.7 GB (task 4) | Inspire FTP / two Inspire hands | 1062 per hand | 1 | 30 Hz | 3 | Visuo-tactile policy learning |
 
 Download and arrange all three datasets with:
 
