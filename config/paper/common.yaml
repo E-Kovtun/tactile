@@ -1,0 +1,27 @@
+# @package _global_
+paths:
+  data_root: ./datasets
+  xela: ${paths.data_root}/sparsh-skin
+  socks: ${paths.data_root}/socks
+  deco: ${paths.data_root}/deco50/task4
+  cache_root: ./cache
+  xela_cache: ${paths.cache_root}/xela
+  deco_cache: ${paths.cache_root}/deco
+  sock_geometry: ./assets/socks
+  checkpoints: ./checkpoints
+  logs: ./outputs
+  output_dir: ${hydra:runtime.output_dir}
+  work_dir: ${hydra:runtime.cwd}
+seed: 42
+data_seed: 42
+pretrain_seed: 42
+checkpoint: null
+ckpt_path: null
+resume_id: null
+tensorboard:
+  log_dir: ${paths.output_dir}/tensorboard
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ${paths.logs}/${experiment_name}/pretrain-${pretrain_seed}/seed-${seed}/${now:%Y-%m-%d_%H-%M-%S}

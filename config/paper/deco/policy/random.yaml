@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: deco_policy_jepa
+- /components/task@task: deco_policy_random
+- _self_
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+seed: 42
+task_name: deco_task4_hands_policy
+ssl_name: jepa
+trainer:
+  max_epochs: 150
+  validation_frequency: 2
+  checkpoint_frequency: 50
+  early_stopping_enabled: true
+  early_stopping_patience: 151
+  early_stopping_delta: 0.0
+  early_stopping_checkpoint_name: best
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  devices: 1
+  precision: bf16-mixed
+  grad_accum_steps: 1
+  enable_progress_bar: true
+  max_steps: null
+  grad_clip_norm: 10.0
+experiment_name: deco/policy/random
+run_name: seed${seed}
+data_seed: 42

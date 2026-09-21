@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: xela_pose_e2e
+- /components/task@task: xela_pose_e2e
+- _self_
+task_name: downstream_pose_estimation_comparison
+ssl_model_size: tiny
+seed: 42
+trainer:
+  devices: 4
+  max_epochs: 500
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  checkpoint_interval_type: log
+  max_task_checkpoints: 10
+  save_probe_weights_only: false
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+  early_stopping_delta: 1.0e-05
+  early_stopping_checkpoint_name: best
+  enable_progress_bar: true
+  grad_accum_steps: 1
+ssl_name: e2e
+sensor: xela
+train_data_budget: 1.0
+val_data_budget: 1.0
+data_seed: 42
+experiment_name: xela/pose/e2e
+run_name: seed${seed}

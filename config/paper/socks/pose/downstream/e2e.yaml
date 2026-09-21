@@ -1,0 +1,21 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: socks_pose_downstream_e2e
+- /components/task@task: socks_pose_downstream_e2e
+- _self_
+task_name: sock_pose_official_cnn
+seed: 42
+trainer:
+  devices: 1
+  max_epochs: 500
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+  enable_progress_bar: true
+data_seed: 42
+experiment_name: socks/pose/downstream/e2e
+run_name: seed${seed}

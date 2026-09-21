@@ -1,0 +1,84 @@
+train_dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+val_dataloader:
+  batch_size: 256
+  num_workers: 8
+  shuffle: false
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+test_dataloader:
+  batch_size: 256
+  num_workers: 8
+  shuffle: false
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+normalization:
+  mean: null
+  std: null
+object_classes: null
+object_class_weights: null
+cache:
+  enabled: true
+  root: ${paths.xela_cache}
+  force_recompute: false
+  fingerprint_mode: stats
+  log_hits: true
+  num_workers: 4
+window_time: 0.1
+window_overlap: 0.0
+interpolating_freq: 100
+sensor: xela
+dataset_list:
+- type: teleop
+  sequence_list:
+  - corn
+  - rubikscube
+  - metalcup
+  - cup
+  - ball
+  - drill
+  - mustard
+  - lego
+  - pringle
+  - legopool
+  - watermelon
+  - popcorn
+  - loofah
+  - slipper
+  train_dataset_ids:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  val_dataset_ids:
+  - 8
+  test_dataset_ids:
+  - 9
+  dataset:
+    _target_: tactile_ssl.data.xela_tactile.XelaSSLDataset
+    config:
+      window_time: ${data.window_time}
+      window_overlap: ${data.window_overlap}
+      interpolating_freq: ${data.interpolating_freq}
+      subtract_baseline: true
+      smooth_data: false
+      bias_noise_std: 0
+      bias_range: 0
+      cache: ${data.cache}
+      features:
+        use_spatial_coords: true
+    data_path: ${paths.xela}/xela/pretraining/extracted
+    baseline_signal_path: ${paths.xela}/xela/pretraining/extracted/baseline/xela/data.pkl
+    xela_urdf_path: ${paths.xela}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+    load_images: false

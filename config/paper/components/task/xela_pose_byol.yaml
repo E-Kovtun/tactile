@@ -1,0 +1,37 @@
+_target_: tactile_ssl.downstream_task.xela_relativepose.XelaRelativePoseModule
+checkpoint_task: null
+encoder_window_batch_size: 512
+model_encoder:
+  _target_: tactile_ssl.model.InstantaneousTactileAlexNet
+  in_dim: 368
+  in_chans: 3
+  sequence_length: 10
+  time_chunk_size: 10
+  num_register_tokens: 0
+  pos_embed_fn: learned
+  with_masktoken: false
+  drop_path_rate: 0.3
+  drop_path_uniform: true
+  normalization: null
+  causal: false
+  rasterizer:
+    _target_: tactile_ssl.model.XelaTactileRasterizer
+  embedding_dim: ${model_info.${ssl_model_size}.embed_dim}
+  pretrained: false
+  image_size: 224
+  frame_index: 5
+model_task:
+  _target_: tactile_ssl.downstream_task.xela_relativepose.ProjectedXelaRelativePoseDecoder
+  discretize: ${data.dataset.config.discretize}
+  embed_dim: tiny
+  num_heads: 6
+  depth: 1
+  input_embed_dim: 9216
+checkpoint_encoder: ${checkpoint}
+train_encoder: false
+encoder_type: byol
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.Adam
+  lr: 0.0001
+scheduler_cfg: null

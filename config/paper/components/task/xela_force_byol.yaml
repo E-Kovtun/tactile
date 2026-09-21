@@ -1,0 +1,39 @@
+_target_: tactile_ssl.downstream_task.XelaForceSLModule
+checkpoint_task: null
+model_encoder:
+  _target_: tactile_ssl.model.InstantaneousTactileAlexNet
+  in_dim: 368
+  in_chans: 3
+  sequence_length: ${int_multiply:${data.dataset.config.window_time},${data.dataset.config.interpolating_freq}}
+  time_chunk_size: ${task.model_encoder.sequence_length}
+  num_register_tokens: 0
+  pos_embed_fn: learned
+  with_masktoken: false
+  drop_path_rate: 0.3
+  drop_path_uniform: true
+  normalization: null
+  causal: false
+  rasterizer:
+    _target_: tactile_ssl.model.XelaTactileRasterizer
+  embedding_dim: ${model_info.${ssl_model_size}.embed_dim}
+  pretrained: false
+  image_size: 224
+  frame_index: 5
+model_task:
+  _target_: tactile_ssl.downstream_task.ProjectedXelaForceLinearProbe
+  time_chunk_size: ${task.model_encoder.time_chunk_size}
+  embed_dim: tiny
+  num_heads: 12
+  depth: 1
+  with_last_activations: true
+  only_normal_force: false
+  pad_id: null
+  input_embed_dim: 9216
+checkpoint_encoder: ${checkpoint}
+train_encoder: false
+encoder_type: byol
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.Adam
+  lr: 0.0001
+scheduler_cfg: null

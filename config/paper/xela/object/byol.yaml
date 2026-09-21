@@ -1,0 +1,29 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: xela_object_jepa
+- /components/task@task: xela_object_byol
+- _self_
+task_name: downstream_object_classification_comparison
+ssl_model_size: tiny
+seed: 42
+trainer:
+  devices: 1
+  max_epochs: 100
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  checkpoint_interval_type: log
+  max_task_checkpoints: 10
+  save_probe_weights_only: true
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+  early_stopping_delta: 1.0e-05
+  precision: bf16-mixed
+  enable_progress_bar: true
+sensor: xela
+ssl_name: byol
+data_seed: 42
+experiment_name: xela/object/byol
+run_name: seed${seed}

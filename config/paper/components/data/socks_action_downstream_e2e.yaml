@@ -1,0 +1,47 @@
+sensor: sock
+dataset:
+  _target_: tactile_ssl.data.sock.create_sock_action_datasets
+  root: ${paths.socks}
+  window_size: 45
+  stride: 5
+  split_seed: ${seed}
+  val_recording_ratio: 0.15
+  test_recording_ratio: 0.15
+  max_train_per_class: 4000
+  include_grids: true
+  normalization_samples: 4096
+  split_protocol: aaai_window
+  aaai_val_per_class: 112
+  aaai_test_per_class: 224
+  aaai_train_per_class: 896
+  normalize_inputs: true
+  normalization_mean: 536.4649528748312
+  normalization_std: 46.81434484100088
+  sensor_map_path: ${paths.sock_geometry}/sensor_map.csv
+  edge_path: ${paths.sock_geometry}/edges.csv
+normalization:
+  mean: null
+  std: null
+object_classes: null
+object_class_weights: null
+train_dataloader:
+  batch_size: 32
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+val_dataloader:
+  batch_size: 32
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true
+test_dataloader:
+  batch_size: 32
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true

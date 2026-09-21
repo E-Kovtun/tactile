@@ -1,0 +1,31 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: xela_force_jepa
+- /components/task@task: xela_force_e2e
+- _self_
+task_name: downstream_force
+ssl_model_size: tiny
+seed: 42
+trainer:
+  devices: 1
+  max_epochs: 500
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  checkpoint_interval_type: log
+  max_task_checkpoints: 10
+  save_probe_weights_only: false
+  early_stopping_enabled: false
+  early_stopping_patience: 10
+  early_stopping_delta: 1.0e-05
+  enable_progress_bar: true
+  grad_accum_steps: 1
+sensor: xela
+ssl_name: e2e
+train_data_budget: 1.0
+val_data_budget: ${train_data_budget}
+data_seed: 42
+experiment_name: xela/force/e2e
+run_name: seed${seed}

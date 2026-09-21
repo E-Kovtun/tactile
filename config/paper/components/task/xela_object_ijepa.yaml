@@ -1,0 +1,33 @@
+_target_: tactile_ssl.downstream_task.XelaObjectSLModule
+checkpoint_task: null
+model_encoder:
+  _target_: tactile_ssl.model.xela_${ssl_model_size}
+  in_dim: 368
+  in_chans: 3
+  sequence_length: 10
+  time_chunk_size: 10
+  num_register_tokens: 0
+  pos_embed_fn: xela_2d_sincos
+  with_masktoken: false
+  drop_path_rate: 0.3
+  drop_path_uniform: true
+  normalization: null
+  causal: false
+  use_taxel_type_embedding: false
+model_task:
+  _target_: tactile_ssl.downstream_task.XelaObjectTokenMLPClassifier
+  input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+  classes: ${data.object_classes}
+  class_weights: ${data.object_class_weights}
+  pooling_type: attention
+  num_heads: 2
+  hidden_dim: 48
+checkpoint_encoder: ${checkpoint}
+train_encoder: false
+encoder_type: ${ssl_name}
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.05
+scheduler_cfg: null

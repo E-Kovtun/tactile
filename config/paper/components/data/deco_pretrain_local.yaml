@@ -1,0 +1,46 @@
+sensor: deco
+dataset:
+  _target_: tactile_ssl.data.deco.create_deco_ssl_datasets
+  root: ${paths.deco}
+  manifest_path: ${paths.deco_cache}/episodes.json
+  window_size: 3
+  stride: 3
+  split_seed: ${seed}
+  val_episode_ratio: 0.15
+  test_episode_ratio: 0.15
+  normalization: deco_max
+  left_scale: 3486.0
+  right_scale: 4050.0
+  include_graph: true
+train_dataloader:
+  batch_size: 512
+  num_workers: 8
+  shuffle: false
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+  collate_fn: ${data.graph_mask_collator}
+val_dataloader:
+  batch_size: 512
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true
+  collate_fn: ${data.graph_mask_collator}
+graph_mask_collator:
+  _target_: tactile_ssl.utils.deco_jepa_masking.DecoJEPAGraphMaskCollator
+  context_mask_scale: ${algorithm.context_mask_scale}
+  target_mask_scale: ${algorithm.target_mask_scale}
+  min_context_keep_tokens: 32
+  min_context_keep_ratio: 0.15
+  growth: dijkstra
+  target_specs:
+  - hand: 0
+    strategy: connected_region
+  - hand: 0
+    strategy: connected_region
+  - hand: 1
+    strategy: connected_region
+  - hand: 1
+    strategy: connected_region

@@ -1,0 +1,52 @@
+train_data_budget: ${train_data_budget}
+val_data_budget: ${val_data_budget}
+train_val_ratio: 0.8
+max_train_data: 50000
+max_val_data: 25000
+sensor: xela
+cache:
+  enabled: true
+  root: ${paths.xela_cache}
+  force_recompute: false
+  log_hits: true
+  num_workers: 32
+  lock_timeout_s: 300
+  stale_lock_s: 600
+  lock_log_interval_s: 30
+dataset:
+  _target_: tactile_ssl.data.xela_force.ForceDataset.create_from_files
+  data_path: ${paths.xela}/downstream_tasks/force_estimation/
+  urdf_path: ${paths.xela}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+  baseline_signal_path: ${paths.xela}/downstream_tasks/force_estimation/base_line_fremont_hand/xela/data.pkl
+  config:
+    subtract_baseline: true
+    normalize: false
+    window_time: 0.1
+    interpolating_freq: 100
+    normal_force_contact_threshold: 0.15
+    max_normal_force:
+    - 1.0
+    - 1.0
+    - 5.0
+    cache: ${data.cache}
+train_dataloader:
+  batch_size: 64
+  num_workers: 2
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+  shuffle: true
+val_dataloader:
+  batch_size: 64
+  num_workers: 2
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+  shuffle: false
+test_dataloader:
+  batch_size: 64
+  num_workers: 2
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+  shuffle: false

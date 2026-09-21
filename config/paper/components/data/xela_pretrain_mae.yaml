@@ -1,0 +1,93 @@
+train_dataloader:
+  batch_size: 256
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+val_dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+normalization:
+  mean: null
+  std: null
+object_classes: null
+object_class_weights: null
+cache:
+  enabled: true
+  root: ${paths.xela_cache}
+  force_recompute: false
+  fingerprint_mode: stats
+  log_hits: true
+  num_workers: 32
+preprocessing:
+  outlier_min: 20000
+  outlier_max: 60000
+  timestamp_policy: overlap_minmax_v1
+  baseline_policy: mean_over_all_baseline_frames_v1
+  numeric_policy: legacy_float64_v1
+features:
+  use_spatial_coords: false
+dataset_target: tactile_ssl.data.xela_tactile.XelaSSLDataset
+graph:
+  enabled: false
+  type: physical
+  topology_mode: per_window
+  edge_attr_mode: distance
+  params:
+    bridge_k: 2
+window_time: 0.1
+window_overlap: 0.0
+interpolating_freq: 100
+sensor: xela
+dataset_list:
+- type: teleop
+  sequence_list:
+  - corn
+  - rubikscube
+  - metalcup
+  - cup
+  - ball
+  - drill
+  - mustard
+  - lego
+  - pringle
+  - legopool
+  - watermelon
+  - popcorn
+  - loofah
+  - slipper
+  train_dataset_ids:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  val_dataset_ids:
+  - 9
+  dataset:
+    _target_: ${data.dataset_target}
+    config:
+      window_time: ${data.window_time}
+      window_overlap: ${data.window_overlap}
+      interpolating_freq: ${data.interpolating_freq}
+      subtract_baseline: true
+      smooth_data: false
+      bias_noise_std: 0
+      bias_range: 0
+      cache: ${data.cache}
+      preprocessing: ${data.preprocessing}
+      features: ${data.features}
+      graph: ${data.graph}
+    data_path: ${paths.xela}/xela/pretraining/extracted
+    baseline_signal_path: ${paths.xela}/xela/pretraining/extracted/baseline/xela/data.pkl
+    xela_urdf_path: ${paths.xela}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+    load_images: false

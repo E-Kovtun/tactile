@@ -7,44 +7,22 @@
 
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import List, Optional
 import os
-from datetime import datetime
 
 import hydra
 import numpy as np
 import torch
 import torch.utils.data as data
-from hydra.core.hydra_config import HydraConfig
-from lightning.fabric import seed_everything
-from omegaconf import DictConfig, OmegaConf, open_dict
-from copy import deepcopy
-from torch.utils.tensorboard import SummaryWriter
+from omegaconf import DictConfig, open_dict
 
-import wandb
-
-from tactile_ssl.trainer import Trainer  # noqa: E402
-from tactile_ssl.utils import get_local_rank, get_node_id
-from tactile_ssl.utils.logging import get_pylogger, print_config_tree  # noqa: E402
-from tactile_ssl.data.d360.utils import get_weights, get_experiment_name, get_modality_tag
-from tactile_ssl.utils.combined_dataset import CombinedDataset
 from tactile_ssl.data.xela.preprocessing import compute_cached_xela_normalization
 from tactile_ssl.data.subsets import deterministic_nested_fractional_subsets
+from tactile_ssl.trainer.downstream import init_tensorboard, train_downstream
+from tactile_ssl.utils.logging import get_pylogger
 
 logger = get_pylogger(__name__)
-
-os.environ.setdefault("TACTILE_RUN_TIMESTAMP", datetime.now().strftime("%Y.%m.%d_%H-%M"))
-
-OmegaConf.register_new_resolver("int_multiply", lambda a, b: int(a * b))
-OmegaConf.register_new_resolver("int_divide", lambda a, b: a // b)
-OmegaConf.register_new_resolver("d360_expt_name", get_experiment_name)
-OmegaConf.register_new_resolver("d360_modal_tag", get_modality_tag)
-OmegaConf.register_new_resolver("join", lambda separator, values: separator.join(map(str, values)))
-
-
-def init_tensorboard(cfg: DictConfig):
-    writer = SummaryWriter(log_dir=cfg.log_dir)
-    return writer
 
 
 def get_xela_dataset(dataset_cfg: DictConfig, dataset_name: str, d_id: int, object_class: Optional[int] = None):
@@ -65,109 +43,95 @@ def get_xela_dataset(dataset_cfg: DictConfig, dataset_name: str, d_id: int, obje
 def get_dataloaders_magnetic_based(cfg: DictConfig):
     data_cfg = cfg.data
 
-    if data_cfg.sensor == "xela":
+    if data_cfg.sensor != "xela":
+        raise ValueError("Expected Xela data; use the Socks or DECO task entrypoint.")
 
-        def instantiate_xela_tasks(tasks):
-            cache_cfg = data_cfg.get("cache", {})
-            num_workers = int(cache_cfg.get("num_workers", 0))
-            if num_workers > 0 and len(tasks) > 1:
-                max_workers = min(num_workers, len(tasks))
-                logger.info(f"Loading Xela object datasets with {max_workers} cache workers")
-                with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    return list(pool.map(lambda task: get_xela_dataset(*task), tasks))
-            return [get_xela_dataset(*task) for task in tasks]
+    def instantiate_xela_tasks(tasks):
+        cache_cfg = data_cfg.get("cache", {})
+        num_workers = int(cache_cfg.get("num_workers", 0))
+        if num_workers > 0 and len(tasks) > 1:
+            max_workers = min(num_workers, len(tasks))
+            logger.info(f"Loading Xela object datasets with {max_workers} cache workers")
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                return list(pool.map(lambda task: get_xela_dataset(*task), tasks))
+        return [get_xela_dataset(*task) for task in tasks]
 
-        train_datasets, val_datasets, test_datasets = [], [], []
-        dataset_list: List = data_cfg.dataset_list
-        object_classes = []
-        object_class_sizes = []
-        for dataset_l in dataset_list:
-            assert dataset_l.type == "teleop"
-            train_dataset_ids = dataset_l.train_dataset_ids
-            val_dataset_ids = dataset_l.val_dataset_ids
-            test_dataset_ids = dataset_l.test_dataset_ids
-            train_tasks, val_tasks, test_tasks = [], [], []
-            for obj in dataset_l.sequence_list:
-                object_class = len(object_classes)
-                object_classes.append(obj)
-                object_class_sizes.append(0)
-                train_tasks.extend(
-                    (deepcopy(dataset_l.dataset), obj, d_id, object_class)
-                    for d_id in train_dataset_ids
-                )
-                val_tasks.extend(
-                    (deepcopy(dataset_l.dataset), obj, d_id, object_class)
-                    for d_id in val_dataset_ids
-                )
-                test_tasks.extend(
-                    (deepcopy(dataset_l.dataset), obj, d_id, object_class)
-                    for d_id in test_dataset_ids
-                )
-            for dataset in instantiate_xela_tasks(train_tasks):
-                if dataset is not None:
-                    object_class_sizes[dataset.object_label] += len(dataset)
-                    train_datasets.append(dataset)
-            val_datasets.extend(
-                dataset for dataset in instantiate_xela_tasks(val_tasks) if dataset is not None
+    train_datasets, val_datasets, test_datasets = [], [], []
+    dataset_list: List = data_cfg.dataset_list
+    object_classes = []
+    object_class_sizes = []
+    for dataset_l in dataset_list:
+        assert dataset_l.type == "teleop"
+        train_dataset_ids = dataset_l.train_dataset_ids
+        val_dataset_ids = dataset_l.val_dataset_ids
+        test_dataset_ids = dataset_l.test_dataset_ids
+        train_tasks, val_tasks, test_tasks = [], [], []
+        for obj in dataset_l.sequence_list:
+            object_class = len(object_classes)
+            object_classes.append(obj)
+            object_class_sizes.append(0)
+            train_tasks.extend(
+                (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                for d_id in train_dataset_ids
             )
-            test_datasets.extend(
-                dataset for dataset in instantiate_xela_tasks(test_tasks) if dataset is not None
+            val_tasks.extend(
+                (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                for d_id in val_dataset_ids
             )
-
-        print(f"Object class sizes: {object_class_sizes}")
-        object_class_sizes = np.asarray(object_class_sizes)
-        object_class_ratios = object_class_sizes / np.sum(object_class_sizes)
-        object_class_weights = 1 / object_class_ratios
-        object_class_weights = object_class_weights / np.sum(object_class_weights)
-        print(f"Object class weights: {object_class_weights}")
-
-        xela_mean, xela_std = compute_cached_xela_normalization(train_datasets)
-        logger.info(f"Compute Xela normalization: mean={xela_mean}, std={xela_std}")
-
-        with open_dict(cfg):
-            cfg.data.normalization.mean = xela_mean.tolist()
-            cfg.data.normalization.std = xela_std.tolist()
-            cfg.data.object_classes = object_classes
-            cfg.data.object_class_weights = object_class_weights.tolist()
-
-        for dataset in train_datasets + val_datasets + test_datasets:
-            dataset.update_normalization(xela_mean, xela_std)
-
-        full_train_size = sum(len(dataset) for dataset in train_datasets)
-        train_data_budget = float(data_cfg.get("train_data_budget", 1.0))
-        subset_seed = int(cfg.get("data_seed", cfg.seed))
-        train_datasets = deterministic_nested_fractional_subsets(
-            train_datasets,
-            fraction=train_data_budget,
-            seed=subset_seed,
+            test_tasks.extend(
+                (deepcopy(dataset_l.dataset), obj, d_id, object_class)
+                for d_id in test_dataset_ids
+            )
+        for dataset in instantiate_xela_tasks(train_tasks):
+            if dataset is not None:
+                object_class_sizes[dataset.object_label] += len(dataset)
+                train_datasets.append(dataset)
+        val_datasets.extend(
+            dataset for dataset in instantiate_xela_tasks(val_tasks) if dataset is not None
         )
-        selected_train_size = sum(len(dataset) for dataset in train_datasets)
-        logger.info(
-            "Xela object train budget: requested=%.4f selected=%d/%d (%.4f), seed=%d",
-            train_data_budget,
-            selected_train_size,
-            full_train_size,
-            selected_train_size / full_train_size,
-            subset_seed,
+        test_datasets.extend(
+            dataset for dataset in instantiate_xela_tasks(test_tasks) if dataset is not None
         )
-        train_dset = data.ConcatDataset(train_datasets)
-        val_dset = data.ConcatDataset(val_datasets)
-        test_dset = data.ConcatDataset(test_datasets)
 
-    elif data_cfg.sensor == "sock":
-        train_dset, val_dset, test_dset = hydra.utils.instantiate(data_cfg.dataset)
-        with open_dict(cfg):
-            cfg.data.normalization.mean = train_dset.input_mean.tolist()
-            cfg.data.normalization.std = train_dset.input_std.tolist()
-            cfg.data.object_classes = list(train_dset.classes)
-            cfg.data.object_class_weights = train_dset.class_weights.tolist()
+    print(f"Object class sizes: {object_class_sizes}")
+    object_class_sizes = np.asarray(object_class_sizes)
+    object_class_ratios = object_class_sizes / np.sum(object_class_sizes)
+    object_class_weights = 1 / object_class_ratios
+    object_class_weights = object_class_weights / np.sum(object_class_weights)
+    print(f"Object class weights: {object_class_weights}")
 
-    elif data_cfg.sensor == "deco":
-        train_dset, val_dset = hydra.utils.instantiate(data_cfg.dataset)
-        test_dset = train_dset.test_dataset
+    xela_mean, xela_std = compute_cached_xela_normalization(train_datasets)
+    logger.info(f"Compute Xela normalization: mean={xela_mean}, std={xela_std}")
 
-    else:
-        raise NotImplementedError(f"Sensor type {data_cfg.sensor} is not supported")
+    with open_dict(cfg):
+        cfg.data.normalization.mean = xela_mean.tolist()
+        cfg.data.normalization.std = xela_std.tolist()
+        cfg.data.object_classes = object_classes
+        cfg.data.object_class_weights = object_class_weights.tolist()
+
+    for dataset in train_datasets + val_datasets + test_datasets:
+        dataset.update_normalization(xela_mean, xela_std)
+
+    full_train_size = sum(len(dataset) for dataset in train_datasets)
+    train_data_budget = float(data_cfg.get("train_data_budget", 1.0))
+    subset_seed = int(cfg.get("data_seed", cfg.seed))
+    train_datasets = deterministic_nested_fractional_subsets(
+        train_datasets,
+        fraction=train_data_budget,
+        seed=subset_seed,
+    )
+    selected_train_size = sum(len(dataset) for dataset in train_datasets)
+    logger.info(
+        "Xela object train budget: requested=%.4f selected=%d/%d (%.4f), seed=%d",
+        train_data_budget,
+        selected_train_size,
+        full_train_size,
+        selected_train_size / full_train_size,
+        subset_seed,
+    )
+    train_dset = data.ConcatDataset(train_datasets)
+    val_dset = data.ConcatDataset(val_datasets)
+    test_dset = data.ConcatDataset(test_datasets)
 
     return train_dset, val_dset, test_dset
 
@@ -181,47 +145,9 @@ def get_dataloaders(cfg: DictConfig):
 
 
 def train(cfg: DictConfig):
-
-    logger.info("Instantiating tensorboard ...")
-    writer = init_tensorboard(cfg.tensorboard)
-
-    print_config_tree(cfg, resolve=True, save_to_file=True)
-    if cfg.get("seed"):
-        seed_everything(cfg.seed, workers=True)
-    _GLOBAL_SEED = cfg.seed
-    np.random.seed(_GLOBAL_SEED)
-    torch.manual_seed(_GLOBAL_SEED)
-    torch.backends.cudnn.benchmark = True
-
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(cfg)
-
-    logger.info(f"Instantiating model <{cfg.task._target_}>")
-    model = hydra.utils.instantiate(cfg.task)
-
-    trainer = Trainer(tb_logger=writer, **cfg.trainer)
-
-    trainer.fit(model, train_dataloader, val_dataloader, ckpt_path=cfg.ckpt_path)
-    if trainer.use_early_stopping:
-        evaluation_checkpoint = os.path.join(
-            trainer.checkpoint_dir,
-            f"{trainer.early_stopping_checkpoint_name}.ckpt",
-        )
-    else:
-        evaluation_checkpoint = trainer.get_latest_checkpoint(trainer.checkpoint_dir)
-    if evaluation_checkpoint is None or not os.path.isfile(evaluation_checkpoint):
-        raise FileNotFoundError(
-            f"No final downstream checkpoint found in {trainer.checkpoint_dir}"
-        )
-    trainer.evaluate(
-        model,
-        test_dataloader,
-        ckpt_path_to_eval=evaluation_checkpoint,
-    )
-
-    writer.close()
+    train_downstream(cfg, get_dataloaders, evaluate_saved_checkpoint=True)
 
 
-# @hydra.main(version_base="1.3", config_path="config")
 @hydra.main(version_base="1.3", config_path="config", config_name="default_task.yaml")
 def main(cfg: DictConfig):
     """

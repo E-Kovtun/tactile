@@ -1,0 +1,32 @@
+_target_: tactile_ssl.algorithm.BYOLModule
+backbone:
+  _target_: tactile_ssl.model.AlexnetWrapper
+projector:
+  _target_: tactile_ssl.algorithm.byol.MLP
+  input_dim: 9216
+  output_dim: 1024
+decoders:
+- _target_: tactile_ssl.algorithm.byol.ReconstructionDecoder
+  input_dim: 1024
+- _target_: tactile_ssl.algorithm.byol.ClassificationDecoder
+  input_dim: 1024
+  classes: ${data.object_classes}
+  class_weights: ${data.object_class_weights}
+augment_fn:
+  _target_: tactile_ssl.data.xela_tdex.utils.get_tactile_augmentations
+  img_size:
+  - 224
+  - 224
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.Adam
+  lr: 0.001
+  weight_decay: 1.0e-05
+moving_average_decay: 0.99
+decoder_lrs:
+- 0.0001
+- 0.0001
+image_size: 224
+lr_scheduler_cfg: null
+wd_scheduler_cfg: null
+use_precomputed_views: true

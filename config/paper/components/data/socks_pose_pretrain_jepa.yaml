@@ -1,0 +1,56 @@
+sensor: sock
+dataset:
+  _target_: tactile_ssl.data.sock.create_sock_pretrain_datasets
+  root: ${paths.socks}
+  window_size: 5
+  stride: 5
+  include_classification: false
+  pose_splits:
+  - train
+  validation_samples: 512
+  normalization_samples: 4096
+  classification_recording_split: train
+  classification_split_seed: ${seed}
+  classification_val_recording_ratio: 0.15
+  classification_test_recording_ratio: 0.15
+  source_normalization: true
+  sampling_temperature: null
+  pose_normalization_mean: 0.0804904026450019
+  pose_normalization_std: 0.22589546589653367
+  sensor_map_path: ${paths.sock_geometry}/sensor_map.csv
+  edge_path: ${paths.sock_geometry}/edges.csv
+normalization:
+  mean: null
+  std: null
+train_dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+  collate_fn: ${data.graph_mask_collator}
+val_dataloader:
+  batch_size: 64
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true
+  collate_fn: ${data.graph_mask_collator}
+graph_mask_collator:
+  _target_: tactile_ssl.utils.sock_jepa_masking.SockJEPAGraphMaskCollator
+  context_mask_scale: ${algorithm.context_mask_scale}
+  target_mask_scale: ${algorithm.target_mask_scale}
+  min_context_keep_tokens: 32
+  min_context_keep_ratio: 0.15
+  growth: dijkstra
+  target_specs:
+  - foot: 0
+    strategy: connected_region
+  - foot: 0
+    strategy: random
+  - foot: 1
+    strategy: connected_region
+  - foot: 1
+    strategy: random

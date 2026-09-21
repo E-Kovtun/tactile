@@ -1,0 +1,33 @@
+_target_: tactile_ssl.downstream_task.XelaForceSLModule
+checkpoint_task: null
+model_encoder:
+  _target_: tactile_ssl.model.xela_${ssl_model_size}
+  in_dim: 368
+  in_chans: 3
+  sequence_length: 10
+  time_chunk_size: 10
+  num_register_tokens: 0
+  pos_embed_fn: learned
+  with_masktoken: false
+  drop_path_rate: 0.3
+  drop_path_uniform: true
+  normalization: null
+  causal: false
+model_task:
+  _target_: tactile_ssl.downstream_task.XelaForceLinearProbe
+  time_chunk_size: ${task.model_encoder.time_chunk_size}
+  embed_dim: ${ssl_model_size}
+  num_heads: 2
+  depth: 1
+  with_last_activations: true
+  only_normal_force: false
+  pad_id: 15
+  pooling_type: attention
+checkpoint_encoder: ${checkpoint}
+train_encoder: false
+encoder_type: ${ssl_name}
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.Adam
+  lr: 0.0001
+scheduler_cfg: null

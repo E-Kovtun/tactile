@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: xela_pretrain_ijepa
+- /components/algorithm@algorithm: xela_pretrain_ijepa
+- _self_
+seed: 42
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+trainer:
+  max_epochs: 500
+  grad_clip_norm: 10.0
+  validation_frequency: 5
+  checkpoint_frequency: 50
+  log_frequency: 500
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  max_steps: null
+  enable_progress_bar: false
+  devices: 4
+task_name: pretrain_transformer_encoder
+ssl_name: ijepa_2d
+ssl_model_size: tiny
+experiment_name: xela/pretrain/ijepa
+run_name: seed${seed}
+pretrain_seed: ${seed}

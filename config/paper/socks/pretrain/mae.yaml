@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: socks_pretrain_mae
+- /components/algorithm@algorithm: socks_pretrain_mae
+- _self_
+seed: 42
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+trainer:
+  max_epochs: 984
+  grad_clip_norm: 10.0
+  validation_frequency: 5
+  checkpoint_frequency: 50
+  log_frequency: 500
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  devices: 1
+  precision: bf16-mixed
+  max_steps: 292000
+  enable_progress_bar: true
+task_name: pretrain_sock_encoder
+ssl_name: mae
+experiment_name: socks/pretrain/mae
+run_name: seed${seed}
+pretrain_seed: ${seed}

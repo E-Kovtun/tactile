@@ -1,0 +1,22 @@
+sensor: deco
+dataset:
+  _target_: tactile_ssl.data.deco_ssl_cache.create_cached_deco_ssl_datasets
+  cache_root: ${paths.deco_cache}/tactile
+  cache_manifest_path: ${paths.deco_cache}/tactile/manifest.json
+  split_seed: 42
+  stride: 3
+  include_graph: false
+train_dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+val_dataloader:
+  batch_size: 32
+  num_workers: 4
+  shuffle: false
+  drop_last: false
+  pin_memory: true
+  persistent_workers: true

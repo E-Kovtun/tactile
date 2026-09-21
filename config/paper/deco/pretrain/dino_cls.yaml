@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/data@data: deco_pretrain_dino_cls
+- /components/algorithm@algorithm: deco_pretrain_dino_cls
+- _self_
+seed: 42
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+trainer:
+  max_epochs: 150
+  grad_clip_norm: 10.0
+  validation_frequency: 5
+  checkpoint_frequency: 50
+  log_frequency: 500
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  devices: 4
+  precision: bf16-mixed
+task_name: pretrain_deco_task4_encoder
+ssl_name: dinov2
+experiment_name: deco/pretrain/dino_cls
+run_name: seed${seed}
+pretrain_seed: ${seed}

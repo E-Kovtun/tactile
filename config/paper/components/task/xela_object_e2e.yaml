@@ -1,0 +1,46 @@
+_target_: tactile_ssl.downstream_task.XelaObjectSLModule
+checkpoint_task: null
+model_encoder:
+  _target_: tactile_ssl.model.xela_${ssl_model_size}
+  in_dim: 368
+  in_chans: 3
+  sequence_length: 10
+  time_chunk_size: 10
+  num_register_tokens: 0
+  pos_embed_fn: learned
+  with_masktoken: false
+  drop_path_rate: 0.3
+  drop_path_uniform: true
+  normalization:
+    mean:
+    - -9.90929889678955
+    - 4.820801734924316
+    - -76.11141967773438
+    std:
+    - 93.05754089355469
+    - 100.04659271240234
+    - 108.84810638427734
+  causal: false
+model_task:
+  _target_: tactile_ssl.downstream_task.XelaObjectTokenMLPClassifier
+  input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+  classes: ${data.object_classes}
+  class_weights: ${data.object_class_weights}
+  pooling_type: attention
+  num_heads: 2
+  hidden_dim: 48
+checkpoint_encoder: null
+train_encoder: true
+encoder_type: ${ssl_name}
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.05
+scheduler_cfg:
+  _partial_: true
+  _target_: tactile_ssl.model.custom_scheduler.WarmupCosineScheduler
+  final_lr: 1.0e-06
+  start_lr: 1.0e-05
+  warmup_epochs: 30
+encoder_normalization_float32: true

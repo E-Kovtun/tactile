@@ -1,0 +1,30 @@
+_target_: tactile_ssl.downstream_task.sock.SockPoseOfficialJEPAModule
+checkpoint_task: null
+model_encoder:
+  _target_: tactile_ssl.model.sock_${ssl_model_size}
+  in_dim: 453
+  in_chans: 1
+  sequence_length: 5
+  time_chunk_size: 5
+  num_register_tokens: 0
+  pos_embed_fn: learned
+  with_masktoken: false
+  normalization: ${data.normalization}
+  causal: false
+model_task:
+  _target_: tactile_ssl.downstream_task.sock.SockTemporalPoseRegressor
+  input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+  n_outputs: 69
+  num_heads: 3
+  temporal_depth: 2
+  max_windows: 12
+checkpoint_encoder: ${checkpoint}
+train_encoder: false
+encoder_type: jepa
+encoder_normalization_float32: true
+optim_cfg:
+  _partial_: true
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.05
+scheduler_cfg: null

@@ -1,0 +1,390 @@
+{
+  "xela/pretrain/jepa": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-jepa-2l2r/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "xela-jepa-2l2r",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/local": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-jepa-4l/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "xela-jepa-4l",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/global": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-jepa-4r/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "xela-jepa-4r",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/ijepa": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-ijepa-2d/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "xela-ijepa-2d",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/local_context": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_xela/context_comparison_2026.09.10/xela-jepa-2l2r-connected-20260910/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "xela-jepa-2l2r-connected-20260910",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/mae": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_baselines/byol_mae_2026.09.02/xela/mae/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "xela-mae",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/byol": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_baselines/byol_instantaneous_paperlike_final_150ep_2026.09.06/xela/pretrain-seed17/pretrain/.hydra/config.yaml",
+    "method": "xela-byol-instantaneous-paperlike-final150",
+    "requires_checkpoint": false
+  },
+  "xela/force/jepa": {
+    "entrypoint": "train_task_force.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-jepa-2l2r/pretrain-seed42/heads_reference_batch/force/seed42/.hydra/config.yaml",
+    "method": "xela-jepa-2l2r-reference-batch-heads",
+    "requires_checkpoint": true
+  },
+  "xela/object/jepa": {
+    "entrypoint": "train_task_object.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-jepa-2l2r/pretrain-seed42/heads_reference_batch/object/seed42/.hydra/config.yaml",
+    "method": "xela-jepa-2l2r-reference-batch-heads",
+    "requires_checkpoint": true
+  },
+  "xela/pose/jepa": {
+    "entrypoint": "train_task_pose_estimation.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-jepa-2l2r/pretrain-seed42/heads_reference_batch/pose/seed42/.hydra/config.yaml",
+    "method": "xela-jepa-2l2r-reference-batch-heads",
+    "requires_checkpoint": true
+  },
+  "xela/force/mae": {
+    "entrypoint": "train_task_force.py",
+    "source": "final_experiments_baselines/byol_mae_2026.09.02/xela/mae/pretrain-seed42/heads_reference_batch/force/seed42/.hydra/config.yaml",
+    "method": "xela-mae-reference-batch-heads",
+    "requires_checkpoint": true
+  },
+  "xela/object/mae": {
+    "entrypoint": "train_task_object.py",
+    "source": "final_experiments_baselines/byol_mae_2026.09.02/xela/mae/pretrain-seed42/heads_reference_batch/object/seed42/.hydra/config.yaml",
+    "method": "xela-mae-reference-batch-heads",
+    "requires_checkpoint": true
+  },
+  "xela/pose/mae": {
+    "entrypoint": "train_task_pose_estimation.py",
+    "source": "final_experiments_baselines/byol_mae_2026.09.02/xela/mae/pretrain-seed42/heads_reference_batch/pose/seed42/.hydra/config.yaml",
+    "method": "xela-mae-reference-batch-heads",
+    "requires_checkpoint": true
+  },
+  "xela/force/byol": {
+    "entrypoint": "train_task_force.py",
+    "source": "final_experiments_baselines/byol_instantaneous_paperlike_final_150ep_2026.09.06/xela/pretrain-seed17/heads/force/seed42/.hydra/config.yaml",
+    "method": "xela-byol-instantaneous-paperlike-final150",
+    "requires_checkpoint": true
+  },
+  "xela/object/byol": {
+    "entrypoint": "train_task_object.py",
+    "source": "final_experiments_baselines/byol_instantaneous_paperlike_final_150ep_2026.09.06/xela/pretrain-seed17/heads/object/seed42/.hydra/config.yaml",
+    "method": "xela-byol-instantaneous-paperlike-final150",
+    "requires_checkpoint": true
+  },
+  "xela/pose/byol": {
+    "entrypoint": "train_task_pose_estimation.py",
+    "source": "final_experiments_baselines/byol_instantaneous_paperlike_final_150ep_2026.09.06/xela/pretrain-seed17/heads/pose/seed42/.hydra/config.yaml",
+    "method": "xela-byol-instantaneous-paperlike-final150",
+    "requires_checkpoint": true
+  },
+  "xela/force/e2e": {
+    "entrypoint": "train_task_force.py",
+    "source": "final_experiments_xela/end_to_end_500ep_2026.09.07/force/seed42/.hydra/config.yaml",
+    "method": "xela-end-to-end",
+    "requires_checkpoint": false
+  },
+  "xela/object/e2e": {
+    "entrypoint": "train_task_object.py",
+    "source": "final_experiments_xela/end_to_end_500ep_2026.09.07/object/seed42/.hydra/config.yaml",
+    "method": "xela-end-to-end",
+    "requires_checkpoint": false
+  },
+  "xela/pose/e2e": {
+    "entrypoint": "train_task_pose_estimation.py",
+    "source": "final_experiments_xela/end_to_end_500ep_2026.09.07/pose/seed42/.hydra/config.yaml",
+    "method": "xela-end-to-end",
+    "requires_checkpoint": false
+  },
+  "xela/force/ijepa": {
+    "entrypoint": "train_task_force.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-ijepa-2d/pretrain-seed42/heads/force/seed42/.hydra/config.yaml",
+    "method": "xela-ijepa-2d",
+    "requires_checkpoint": true
+  },
+  "xela/object/ijepa": {
+    "entrypoint": "train_task_object.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-ijepa-2d/pretrain-seed42/heads/object/seed42/.hydra/config.yaml",
+    "method": "xela-ijepa-2d",
+    "requires_checkpoint": true
+  },
+  "xela/pose/ijepa": {
+    "entrypoint": "train_task_pose_estimation.py",
+    "source": "final_experiments_xela/rerun_seed_matrix_2026.08.20/xela-ijepa-2d/pretrain-seed42/heads/pose/seed42/.hydra/config.yaml",
+    "method": "xela-ijepa-2d",
+    "requires_checkpoint": true
+  },
+  "xela/force/dino": {
+    "entrypoint": "train_task_force.py",
+    "source": "experiments/downstream_force_dinov2_seed_matrix/dino-pretrainseed42-headseed42-force-standard_2026.08.19_10-21/.hydra/config.yaml",
+    "method": "xela-legacy-dino-standard",
+    "requires_checkpoint": true
+  },
+  "xela/pretrain/dino": {
+    "entrypoint": "train.py",
+    "source": "experiments/pretrain_dinov2_encoder_dinov2/DiNO_without_taxel_type_embedding_2026.07.14_22-31/.hydra/config.yaml",
+    "method": "xela-legacy-dino-standard",
+    "requires_checkpoint": false
+  },
+  "xela/object/dino": {
+    "entrypoint": "train_task_object.py",
+    "source": "experiments/downstream_object_dinov2_seed_matrix/dino-pretrainseed42-headseed42-object-standard_2026.08.19_10-21/.hydra/config.yaml",
+    "method": "xela-legacy-dino-standard",
+    "requires_checkpoint": true
+  },
+  "xela/pose/dino": {
+    "entrypoint": "train_task_pose_estimation.py",
+    "source": "final_experiments_xela/dino_standard_pose_current_20260914/pretrain-seed42/pose/head-seed42/.hydra/config.yaml",
+    "method": "xela-dino-standard-pose-current-20260914",
+    "requires_checkpoint": true
+  },
+  "socks/action/pretrain/jepa": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_socks/context_comparison_2026.09.10/sock-random-action-20260910/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "sock-random-action-20260910",
+    "requires_checkpoint": false
+  },
+  "socks/action/downstream/jepa": {
+    "entrypoint": "train_task_socks_action.py",
+    "source": "final_experiments_socks/context_comparison_2026.09.10/sock-random-action-20260910/pretrain-seed42/heads/action/overlap5/seed42/.hydra/config.yaml",
+    "method": "sock-random-action-20260910",
+    "requires_checkpoint": true
+  },
+  "socks/action/pretrain/dino": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_socks/rerun_seed_matrix_2026.08.20/sock-dino-action-s5/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "sock-dino-action-s5",
+    "requires_checkpoint": false
+  },
+  "socks/action/downstream/dino": {
+    "entrypoint": "train_task_socks_action.py",
+    "source": "final_experiments_socks/rerun_seed_matrix_2026.08.20/sock-dino-action-s5/pretrain-seed42/heads/action_timestamp_aligned_v2/overlap5/seed42/.hydra/config.yaml",
+    "method": "sock-dino-action-s5",
+    "requires_checkpoint": true
+  },
+  "socks/action/downstream/e2e": {
+    "entrypoint": "train_task_socks_action.py",
+    "source": "final_experiments_socks/rerun_seed_matrix_2026.08.20/sock-cnn-gru-baseline/heads/action_timestamp_aligned_v2/overlap5/seed42/.hydra/config.yaml",
+    "method": "sock-cnn-gru-baseline",
+    "requires_checkpoint": false
+  },
+  "socks/pose/pretrain/jepa": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_socks/context_comparison_2026.09.10/sock-random-pose-20260910/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "sock-random-pose-20260910",
+    "requires_checkpoint": false
+  },
+  "socks/pose/downstream/jepa": {
+    "entrypoint": "train_task_socks_pose.py",
+    "source": "final_experiments_socks/context_comparison_2026.09.10/sock-random-pose-20260910/pretrain-seed42/heads/pose/overlap5/seed42/.hydra/config.yaml",
+    "method": "sock-random-pose-20260910",
+    "requires_checkpoint": true
+  },
+  "socks/pose/pretrain/dino": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_socks/rerun_seed_matrix_2026.08.20/sock-dino-pose-s5/pretrain-seed17/pretrain/.hydra/config.yaml",
+    "method": "sock-dino-pose-s5",
+    "requires_checkpoint": false
+  },
+  "socks/pose/downstream/dino": {
+    "entrypoint": "train_task_socks_pose.py",
+    "source": "final_experiments_socks/rerun_seed_matrix_2026.08.20/sock-dino-pose-s5/pretrain-seed17/heads/pose/overlap5/seed42/.hydra/config.yaml",
+    "method": "sock-dino-pose-s5",
+    "requires_checkpoint": true
+  },
+  "socks/pose/downstream/e2e": {
+    "entrypoint": "train_task_socks_pose.py",
+    "source": "final_experiments_socks/rerun_seed_matrix_2026.08.20/sock-pose-cnn-baseline/heads/pose/overlap5/seed42/.hydra/config.yaml",
+    "method": "sock-pose-cnn-baseline",
+    "requires_checkpoint": false
+  },
+  "socks/pretrain/mae": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_baselines/byol_mae_2026.09.02/sock/mae/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "sock-mae",
+    "requires_checkpoint": false
+  },
+  "socks/pretrain/byol": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_baselines/sock_byol_instantaneous_500ep_20260914/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "sock-byol-action-pose-instantaneous-500ep-20260914",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/jepa": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/task4_seed_matrix_150ep_2026.08.25/direct/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-jepa-direct",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/dino": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/task4_hands_only_dinov2_direct_150ep_2026.08.28/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-hands-dinov2-4t",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/dino_cls": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/dino_cls_only_seed_matrix_150ep_0905/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-dino-cls-only-150ep",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/mae": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_baselines/deco_mae_150ep_b2048_2026.09.05/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-mae",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/byol": {
+    "entrypoint": "train.py",
+    "source": "final_experiments_baselines/deco_byol_instantaneous_2026.09.05/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-byol-instantaneous",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/local": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/target_variants_2026.09.10/deco-jepa-4local-handbound-20260910/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-jepa-4local-handbound-20260910",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/global": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/target_variants_2026.09.10/deco-jepa-4random-handbound-20260910/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-jepa-4random-handbound-20260910",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/local_context": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/connected_context_2026.09.11/deco-jepa-twohand-connectedctx-20260911-2l2r/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-jepa-twohand-connectedctx-20260911-2l2r",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/local_local_context": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/connected_context_2026.09.11/deco-jepa-twohand-connectedctx-20260911-4l/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-jepa-twohand-connectedctx-20260911-4l",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/global_local_context": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/connected_context_2026.09.11/deco-jepa-twohand-connectedctx-20260911-4r/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-jepa-twohand-connectedctx-20260911-4r",
+    "requires_checkpoint": false
+  },
+  "deco/pretrain/ijepa": {
+    "entrypoint": "train.py",
+    "source": "experiments_deco/ijepa_2d_targets5_9_2026.09.11/pretrain-seed42/pretrain/.hydra/config.yaml",
+    "method": "deco-ijepa-2d-t5_9-20260911",
+    "requires_checkpoint": false
+  },
+  "deco/policy/jepa": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/direct150_heads_dino20_20260915/jepa150/pretrain-seed42/head-seed42/.hydra/config.yaml",
+    "method": "deco-jepa150-heads-direct150-20260915",
+    "requires_checkpoint": true
+  },
+  "deco/policy/mae": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/mae_heads_continued150_20260914/pretrain-seed42/head-seed42/.hydra/config.yaml",
+    "method": "deco-mae-heads-continued150-20260914",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/dino_cls": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/dino_cls_heads_continued150_20260914/pretrain-seed42/head-seed42/.hydra/config.yaml",
+    "method": "deco-dino-cls-heads-continued150-20260914",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/local": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/target_variants_2026.09.10/deco-jepa-4local-handbound-20260910/pretrain-seed42/heads/seed42/.hydra/config.yaml",
+    "method": "deco-jepa-4local-handbound-20260910",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/global": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/target_variants_2026.09.10/deco-jepa-4random-handbound-20260910/pretrain-seed42/heads/seed42/.hydra/config.yaml",
+    "method": "deco-jepa-4random-handbound-20260910",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/local_context": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/connected_context_2026.09.11/deco-jepa-twohand-connectedctx-20260911-2l2r/pretrain-seed42/heads/seed42/.hydra/config.yaml",
+    "method": "deco-jepa-twohand-connectedctx-20260911-2l2r",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/local_local_context": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/connected_context_2026.09.11/deco-jepa-twohand-connectedctx-20260911-4l/pretrain-seed42/heads/seed42/.hydra/config.yaml",
+    "method": "deco-jepa-twohand-connectedctx-20260911-4l",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/global_local_context": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/connected_context_2026.09.11/deco-jepa-twohand-connectedctx-20260911-4r/pretrain-seed42/heads/seed42/.hydra/config.yaml",
+    "method": "deco-jepa-twohand-connectedctx-20260911-4r",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/random": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/task4_hands_only_baseline_heads_continued150_2026.09.07/random-frozen/head-seed42/.hydra/config.yaml",
+    "method": "deco-hands-baselines-heads-continued150-20260907",
+    "requires_checkpoint": false,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/vision": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/task4_hands_only_baseline_heads_continued150_2026.09.07/vision-only/head-seed42/.hydra/config.yaml",
+    "method": "deco-hands-baselines-heads-continued150-20260907",
+    "requires_checkpoint": false,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  },
+  "deco/policy/e2e": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/task4_hands_e2e_lr_sweep_150ep_seed42_2026.08.31/lr-1e-4/seed42-best-test/.hydra/config.yaml",
+    "method": "deco-hands-end-to-end",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/local_local_context": {
+    "entrypoint": "train.py",
+    "source": "experiments/pretrain_transformer_encoder_jepa_graph/physical_dijkstra_1c4t_c50-90_t10-18_2026.07.22_22-00/.hydra/config.yaml",
+    "method": "xela-legacy-jepa-4l-connected-pose-b16-20260912",
+    "requires_checkpoint": false
+  },
+  "xela/pretrain/global_local_context": {
+    "entrypoint": "train.py",
+    "source": "experiments/pretrain_transformer_encoder_jepa_graph/physical_dijkstra_1c4t_4stratifiedrandom_c50-90_t10-18_2026.07.29_13-14/.hydra/config.yaml",
+    "method": "xela-legacy-jepa-4r-connected-pose-b16-20260912",
+    "requires_checkpoint": false
+  },
+  "deco/policy/ijepa": {
+    "entrypoint": "train_task_deco_policy.py",
+    "source": "experiments_deco/ijepa_2d_targets5_9_2026.09.11/pretrain-seed42/heads/seed42/.hydra/config.yaml",
+    "method": "deco-ijepa-2d-t5_9-20260911",
+    "requires_checkpoint": true,
+    "adaptation": "Single uninterrupted 150-epoch schedule; source run used continuation."
+  }
+}

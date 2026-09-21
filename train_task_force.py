@@ -365,15 +365,22 @@ def train(cfg: DictConfig):
         OmegaConf.save(cfg, f"{cfg.paths.output_dir}/config.yaml")
 
     print_config_tree(cfg, resolve=True, save_to_file=True)
-    if cfg.get("seed"):
-        seed_everything(cfg.seed, workers=True)
-    _GLOBAL_SEED = cfg.seed
+    data_seed = cfg.get("data_seed", cfg.seed)
+    if data_seed is not None:
+        seed_everything(data_seed, workers=True)
+    _GLOBAL_SEED = data_seed
     np.random.seed(_GLOBAL_SEED)
     torch.manual_seed(_GLOBAL_SEED)
     torch.backends.cudnn.benchmark = True
 
     logger.info(f"Instantiating dataset & dataloaders for <{cfg.data.dataset._target_}>")
     train_dataloader, val_dataloader, test_dataloader = get_dataloaders(cfg)
+
+    # Keep dataset selection fixed while varying the downstream head seed.
+    if "data_seed" in cfg:
+        seed_everything(cfg.seed, workers=True)
+        np.random.seed(cfg.seed)
+        torch.manual_seed(cfg.seed)
 
     logger.info(f"Instantiating model <{cfg.task._target_}>")
     model = hydra.utils.instantiate(cfg.task)
