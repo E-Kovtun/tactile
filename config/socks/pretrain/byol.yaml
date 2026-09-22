@@ -1,4 +1,6 @@
 # @package _global_
+# Legacy mixed-source/transductive preset: includes pose val/test data.
+# Not the task-specific Socks evaluation protocol; see README.
 defaults:
 - /common
 - /components/model_info@model_info: xela_pretrain_jepa

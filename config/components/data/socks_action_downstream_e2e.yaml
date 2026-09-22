@@ -4,7 +4,7 @@ dataset:
   root: ${paths.socks}
   window_size: 45
   stride: 5
-  split_seed: ${seed}
+  split_seed: ${data_seed}
   val_recording_ratio: 0.15
   test_recording_ratio: 0.15
   max_train_per_class: 4000

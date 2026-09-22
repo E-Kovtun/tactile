@@ -9,7 +9,7 @@ dataset:
   validation_samples: 512
   normalization_samples: 4096
   classification_recording_split: all
-  classification_split_seed: ${seed}
+  classification_split_seed: ${data_seed}
   classification_val_recording_ratio: 0.15
   classification_test_recording_ratio: 0.15
   classification_window_split: train

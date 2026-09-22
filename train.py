@@ -28,6 +28,7 @@ from tactile_ssl.utils import get_local_rank, get_node_id
 from tactile_ssl.utils.logging import get_pylogger, print_config_tree  # noqa: E402
 from tactile_ssl.data.d360.utils import get_weights, get_experiment_name, get_modality_tag
 from tactile_ssl.utils.combined_dataset import CombinedDataset
+from tactile_ssl.utils.run_config import validate_run_config
 
 logger = get_pylogger(__name__)
 
@@ -309,11 +310,12 @@ def attempt_resume(cfg: DictConfig):
 
 
 def train(cfg: DictConfig):
+    validate_run_config(cfg, "train.py")
     resume_state, cfg = attempt_resume(cfg)
     logger.info(f"Resume state: {resume_state}, {cfg.ckpt_path}")
     logger.info("Instantiating tensorboard ...")
     writer = init_tensorboard(cfg.tensorboard)
-    if ~resume_state:
+    if not resume_state:
         OmegaConf.save(cfg, f"{cfg.paths.output_dir}/config.yaml")
 
     print_config_tree(cfg, resolve=True, save_to_file=True)

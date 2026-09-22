@@ -27,7 +27,7 @@ Tactile-JEPA combines three components: a context encoder, an exponential-moving
   <img src="assets/readme/tactile_jepa_method.png" alt="Tactile-JEPA pretraining with graph-based local and global target masks, followed by downstream learning with a frozen tactile encoder." width="1000">
 </p>
 
-The paper uses a ViT-Tiny encoder (12 blocks, 192-dimensional embeddings, 3 attention heads) and a 4-block predictor. The taxel graph is used for mask sampling during pretraining; downstream encoding does not require the graph.
+The JEPA presets use 192-dimensional embeddings, 3 attention heads, and a 4-block predictor. The encoder has 12 blocks for Xela and DECO, and 8 for Socks. The taxel graph is used for mask sampling during pretraining; downstream encoding does not require the graph.
 
 ## Installation
 
@@ -123,6 +123,8 @@ find config/{xela,socks,deco} -name "*.yaml" | sort
 python train.py --config-name xela/pretrain/jepa --cfg job
 ```
 
+Use `--config-name` with these presets. Historical `+experiment=...` commands and queue manifests belong to the old configuration layout and must be migrated before reuse. DECO policy and Socks downstream tasks now have dedicated entrypoints, shown below.
+
 ### Self-supervised pretraining
 
 ```bash
@@ -131,6 +133,8 @@ python train.py --config-name socks/action/pretrain/jepa
 python train.py --config-name socks/pose/pretrain/jepa
 python train.py --config-name deco/pretrain/jepa
 ```
+
+The main JEPA presets use four GPUs; `batch_size` is **per GPU** (Xela/Socks: 64, DECO: 512). On a smaller machine, set `trainer.devices=1`; changing the device count or batch size changes the effective batch and is not an identical reproduction. Baseline hardware settings vary by preset. Restrict GPU visibility with `CUDA_VISIBLE_DEVICES` when sharing a machine.
 
 ### Downstream tasks
 
@@ -147,6 +151,10 @@ python train_task_deco_policy.py --config-name deco/policy/jepa checkpoint=/path
 
 Outputs, checkpoints, and evaluation artifacts are written under `outputs/` in a separate directory for each run; override it with `paths.logs=...`. DECO policy presets train directly for 150 epochs with one learning-rate schedule.
 
+Pretrained downstream presets require an existing `checkpoint`; omitting it is an error. `checkpoint` loads encoder weights, while `ckpt_path` resumes a complete training run including optimizer state. The DECO policy benchmark predicts the **12 hand-action dimensions over 16 future steps**, using cached ResNet18 features; it does not predict all 28 native action dimensions.
+
+Keep a checkpoint's `.hydra/config.yaml` alongside its run directory. For DECO, the entrypoint checks the saved pretraining split against the policy split when this metadata is available. Historical encoders trained with a different split require retraining for the fixed-split benchmark; editing their configuration cannot remove data already seen during pretraining.
+
 ### Baselines and ablations
 
 Presets include `dino`, `mae`, `byol`, and `e2e`, plus `local`, `global`, `local_context`, and `ijepa` masking variants. For example:
@@ -157,7 +165,9 @@ python train.py --config-name xela/pretrain/local
 python train.py --config-name deco/pretrain/ijepa
 ```
 
-`local` and `global` use single-scale targets; `local_context` uses connected context; `ijepa` uses rectangular masks. To evaluate an ablation, pass its encoder checkpoint to the matching JEPA downstream preset. `e2e` trains from scratch and does not need a pretrained checkpoint. Available methods vary by task; the configuration filenames show the supported combinations.
+`local` and `global` use single-scale targets; `local_context` uses connected context; `ijepa` uses rectangular masks. Use a JEPA downstream preset for the `local`, `global`, and connected-context checkpoints. Use the **`ijepa` downstream preset for I-JEPA**, especially on DECO where its encoder architecture differs. DINO, MAE, and BYOL checkpoints require their own downstream presets where provided. `e2e` trains from scratch and does not need a pretrained checkpoint.
+
+Available combinations are task-specific: Xela provides JEPA, I-JEPA, DINO, MAE, BYOL, and e2e downstream presets; Socks action/pose provide JEPA, DINO, and e2e; DECO policy provides JEPA variants, I-JEPA, MAE, `dino_cls`, e2e, frozen-random, and vision-only. DECO `dino` and `byol` are pretraining-only presets. The legacy `socks/pretrain/{mae,byol}` presets mix action and pose data, **including held-out pose splits**; they are transductive exploratory configurations, not the task-specific evaluation protocol below.
 
 ## Evaluation protocol
 
@@ -167,7 +177,18 @@ The paper evaluates frozen encoders with task-specific heads and reports means a
 - Downstream seeds per encoder: `42`, `17`, `3407` on Sparsh-skin (9 runs per task); additionally `1` on Tactile socks and DECO-50 (12 runs per task).
 - For each downstream run, set `checkpoint` to that encoder and `pretrain_seed` to its pretraining seed; `seed` selects the head seed. Keep `data_seed=42` fixed.
 
-Tactile socks encoders are pretrained separately on each task's training subset. DECO-50 shares training demonstrations between encoder pretraining and policy learning, with validation and test demonstrations held out. Force and in-hand pose data are separate from the Sparsh-skin pretraining data. Keep the exact split and preprocessing protocol fixed when comparing methods.
+The task-specific Socks JEPA/DINO encoders are pretrained separately on action and pose sources. Action pretraining retains the original 45-frame/stride-2 chronological train range; the published action head uses 45-frame/stride-5 windows with 896/112/224 train/validation/test samples per class. This is a chronological window protocol, not a recording-disjoint split. Pose uses the release's separate train/validation/test arrays. DECO-50 shares training demonstrations between encoder pretraining and policy learning, with validation and test episodes held out using `data_seed=42`, independently of the optimization seed. Prepared DECO caches use this fixed split. Force and in-hand pose data are separate from the Sparsh-skin pretraining data. Keep the exact split and preprocessing protocol fixed when comparing methods; historical checkpoints retain the split on which they were trained.
+
+### Configuration regression checks
+
+Run these CPU checks in the installed Linux environment; they do not need the datasets, a GPU, or downloaded model weights:
+
+```bash
+python tests/test_paper_release.py
+python tests/test_release_runtime.py
+```
+
+They cover all public preset targets, model construction, README training-command composition, encoder checkpoint compatibility, JEPA masking and downstream forward/backward passes, split-seed independence, and missing/incompatible-checkpoint errors. They are startup/contract checks, not full-training or metric-reproduction tests.
 
 ## Repository structure
 

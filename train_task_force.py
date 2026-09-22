@@ -356,6 +356,8 @@ def attempt_resume(cfg: DictConfig):
 
 
 def train(cfg: DictConfig):
+    from tactile_ssl.utils.run_config import validate_run_config
+    validate_run_config(cfg, "train_task_force.py")
     resume_state, cfg = attempt_resume(cfg)
 
     logger.info("Instantiating tensorboard ...")

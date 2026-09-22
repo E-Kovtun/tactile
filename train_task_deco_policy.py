@@ -21,6 +21,8 @@ def get_dataloaders(cfg: DictConfig):
 
 
 def train(cfg: DictConfig):
+    from tactile_ssl.utils.run_config import validate_run_config
+    validate_run_config(cfg, "train_task_deco_policy.py")
     train_downstream(cfg, get_dataloaders, evaluate_saved_checkpoint=True)
 
 

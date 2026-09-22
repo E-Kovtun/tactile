@@ -5,7 +5,7 @@ dataset:
   manifest_path: ${paths.deco_cache}/episodes.json
   window_size: 3
   stride: 3
-  split_seed: ${seed}
+  split_seed: ${data_seed}
   val_episode_ratio: 0.15
   test_episode_ratio: 0.15
   normalization: deco_max
