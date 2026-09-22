@@ -155,11 +155,17 @@ def _extract_zip(archive: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     root = destination.resolve()
     with zipfile.ZipFile(archive) as bundle:
+        members = []
         for member in bundle.infolist():
+            # Dropbox folder downloads contain a harmless archive-root marker.
+            # Do not relax validation for any other absolute path.
+            if member.filename == "/" and member.is_dir() and member.file_size == 0:
+                continue
             target = (destination / member.filename).resolve()
             if not target.is_relative_to(root):
-                raise ValueError(f"Unsafe path in {archive.name}: {member.filename}")
-        bundle.extractall(destination)
+                raise ValueError(f"Unsafe path in {archive.name}: {member.filename!r}")
+            members.append(member)
+        bundle.extractall(destination, members=members)
 
 
 def _find_dataset_dir(root: Path, name: str, required: Path) -> Path | None:
@@ -222,10 +228,13 @@ def download_socks(root: Path, force: bool) -> None:
         return
     archive = root / ".downloads" / "senstextile.zip"
     print(f"Downloading Tactile socks to {destination}", flush=True)
-    _download_file(SOCKS_URL, archive)
+    if archive.is_file():
+        print(f"Reusing downloaded archive: {archive}", flush=True)
+    else:
+        _download_file(SOCKS_URL, archive)
     arrange_socks_archive(archive, destination, force)
-    archive.unlink()
     _require_paths("Tactile socks", required)
+    archive.unlink()
 
 
 def download_deco(root: Path, force: bool) -> None:
