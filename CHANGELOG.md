@@ -1,6 +1,6 @@
-0.0.0 (August 19, 2025)
+# Changelog
 
-### Created repo
+## Unreleased
 
-* Added Sparsh-X and Sparsh-skin training codebase
-* Added README
+- Tactile-JEPA models, training presets, and downstream tasks for Xela, Tactile socks, and DECO-50.
+- Dataset download and preparation scripts, configuration validation, and regression tests.
