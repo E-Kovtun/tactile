@@ -1,31 +1,33 @@
-# Contributing to tactile-ssl
-We want to make contributing to this project as easy and transparent as
-possible.
+# Contributing to Tactile-JEPA
 
-## Pull Requests
-We actively welcome your pull requests.
+Bug reports, documentation improvements, and focused pull requests are welcome.
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-1. Fork the repo and create your branch from `main`.
-2. If you've added code that should be tested, add tests.
-3. If you've changed APIs, update the documentation.
-4. Ensure the test suite passes.
-5. Make sure your code lints.
-6. If you haven't already, complete the Contributor License Agreement ("CLA").
+## Reporting issues
 
-## Contributor License Agreement ("CLA")
-In order to accept your pull request, we need you to submit a CLA. You only need
-to do this once to work on any of Facebook's open source projects.
+Include the command and configuration, relevant package versions, expected behavior,
+and a minimal reproducer or error traceback. Do not include credentials or private data.
 
-Complete your CLA here: <https://code.facebook.com/cla>
+## Pull requests
 
-## Issues
-We use GitHub issues to track public bugs. Please ensure your description is
-clear and has sufficient instructions to be able to reproduce the issue.
+1. Create a branch from the repository's default branch.
+2. Keep the change focused; add tests for changed behavior and update affected documentation.
+3. Follow the surrounding code style and describe how you tested the change.
 
-Facebook has a [bounty program](https://www.facebook.com/whitehat/) for the safe
-disclosure of security bugs. In those cases, please go through the process
-outlined on that page and do not file a public issue.
+Set up the environment using [README.md](README.md). From the repository root, run:
+
+```bash
+python tests/test_release_packaging.py
+python tests/test_paper_release.py
+python tests/test_release_runtime.py
+```
+
+These checks run on CPU without datasets or pretrained weights. They validate
+configurations and model interfaces, not full training or published metrics.
+For downloader changes, also run `python -m pytest tests/test_download_datasets.py`
+after installing the optional test dependency with `python -m pip install pytest`.
 
 ## License
-By contributing to tactile-ssl, you agree that your contributions will be licensed
-under the LICENSE file in the root directory of this source tree.
+
+Contributions are provided under the repository's [license](LICENSE.md).
+Preserve existing copyright notices and attribution for third-party code.

@@ -58,12 +58,11 @@ the project or its community.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported by contacting the project team at <opensource-conduct@meta.com>. All
-complaints will be reviewed and investigated and will result in a response that
-is deemed necessary and appropriate to the circumstances. The project team is
-obligated to maintain confidentiality with regard to the reporter of an incident.
-Further details of specific enforcement policies may be posted separately.
+The project team's private reporting contact is temporarily withheld to preserve
+anonymity during double-blind review. It will be published after the review period.
+Do not post sensitive incident details or personal information in public issues.
+Once a private reporting channel is available, reports will be reviewed
+confidentially by the project maintainers.
 
 Project maintainers who do not follow or enforce the Code of Conduct in good
 faith may face temporary or permanent repercussions as determined by other
