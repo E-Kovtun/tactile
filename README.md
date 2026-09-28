@@ -6,8 +6,8 @@ Code accompanying the Tactile-JEPA paper. Tactile-JEPA learns reusable represent
 
 | Resource | Link |
 | --- | --- |
-| Paper / arXiv | TODO: add link |
-| Pretrained models | TODO: add link |
+| Paper | [arXiv](https://arxiv.org/abs/2609.24385) |
+| Pre-trained models | [Hugging Face page](https://huggingface.co/Tactile-JEPA) |
 | Datasets | [Downloads and preparation](#datasets) |
 
 <p align="center">
