@@ -1,0 +1,77 @@
+# @package _global_
+defaults:
+- /common
+- /components/model_info@model_info: xela_pretrain_jepa
+- /components/algorithm@algorithm: deco_pretrain_jepa
+- _self_
+seed: 42
+data_seed: 42
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+algorithm:
+  _target_: tactile_ssl.algorithm.XelaJEPAModule
+  deterministic_teacher: true
+  prediction_loss: mse
+  smooth_l1_beta: 1.0
+  target_layer_norm: false
+  wd_scheduler_cfg:
+    final_weight_decay: 0.1
+  context_mask_scale: [0.85, 1.0]
+  target_mask_scale: [0.30, 0.40]
+trainer:
+  max_epochs: 150
+  grad_clip_norm: 10.0
+  validation_frequency: 5
+  checkpoint_frequency: 10
+  log_frequency: 500
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  devices: 4
+  enable_progress_bar: true
+  max_steps: null
+task_name: pretrain_deco_task4_encoder
+ssl_name: jepa_graph
+experiment_name: deco/pretrain/jepa_wd01
+run_name: seed${seed}
+pretrain_seed: ${seed}
+
+data:
+  sensor: deco
+  dataset:
+    _target_: tactile_ssl.data.deco_ssl_cache.create_cached_deco_ssl_datasets
+    cache_root: ${paths.deco_cache}/tactile
+    split_seed: 42
+    include_graph: true
+  train_dataloader:
+    batch_size: 512
+    num_workers: 8
+    shuffle: true
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+    collate_fn: ${data.graph_mask_collator}
+  val_dataloader:
+    batch_size: 512
+    num_workers: 4
+    shuffle: false
+    drop_last: false
+    pin_memory: true
+    persistent_workers: true
+    collate_fn: ${data.graph_mask_collator}
+  graph_mask_collator:
+    _target_: tactile_ssl.utils.deco_jepa_masking.DecoJEPAGraphMaskCollator
+    context_mask_scale: ${algorithm.context_mask_scale}
+    target_mask_scale: ${algorithm.target_mask_scale}
+    min_context_keep_tokens: 32
+    min_context_keep_ratio: 0.15
+    growth: dijkstra
+    random_context_crop: true
+    max_target_overlap: 0.20
+    target_specs:
+    - hand: 0
+      strategy: connected_region
+    - hand: 0
+      strategy: random
+    - hand: 1
+      strategy: connected_region
+    - hand: 1
+      strategy: random

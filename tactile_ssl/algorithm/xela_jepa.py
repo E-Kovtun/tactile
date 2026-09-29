@@ -2,7 +2,7 @@ import einops
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch.nn import functional as F
 import torch.utils.data as data
 import copy 
 from functools import partial
@@ -100,6 +100,13 @@ class SignalJEPAPredictor(SignalDecoder):
         return out
 
 
+class TargetNormalizedMSE(nn.Module):
+    def forward(self, prediction, target):
+        # Normalize each teacher token over features, never across examples/tokens.
+        normalized = F.layer_norm(target.detach().float(), (target.shape[-1],))
+        return F.mse_loss(prediction.float(), normalized, reduction="none")
+
+
 class XelaJEPAModule(Module, nn.Module):
     def __init__(
         self, 
@@ -114,6 +121,10 @@ class XelaJEPAModule(Module, nn.Module):
         moving_average_decay: Union[float, Tuple[float, ...]] = 0.99,
         use_momentum: bool = True,
         masking: Optional[Dict[str, Any]] = None,
+        deterministic_teacher: bool = False,
+        target_layer_norm: bool = False,
+        prediction_loss: str = "mse",
+        smooth_l1_beta: float = 1.0,
     ):
         super().__init__()
 
@@ -125,12 +136,29 @@ class XelaJEPAModule(Module, nn.Module):
         self.context_encoder = encoder
         self.target_encoder = copy.deepcopy(encoder)
         self.target_encoder.requires_grad_(False)
+        self.deterministic_teacher = bool(deterministic_teacher)
+        if self.deterministic_teacher:
+            self.target_encoder.eval()
         self.predictor = SignalJEPAPredictor(input_dim=encoder.embed_dim, in_dim=encoder.in_dim, in_chans=encoder.in_chans, 
             sequence_length=encoder.sequence_length, time_chunk_size=encoder.time_chunk_size, 
             num_heads=encoder.num_heads, embed_dim=encoder.embed_dim, with_masktoken=True, pos_embed_fn="given",
             zero_init_mask_tokens=True, depth=4)
 
-        self.jepa_loss = nn.MSELoss()
+        self.prediction_loss = str(prediction_loss).lower()
+        if self.prediction_loss == "mse":
+            self.jepa_loss = nn.MSELoss(reduction="none")
+        elif self.prediction_loss == "smooth_l1":
+            if smooth_l1_beta <= 0:
+                raise ValueError("smooth_l1_beta must be positive")
+            self.jepa_loss = nn.SmoothL1Loss(reduction="none", beta=float(smooth_l1_beta))
+        else:
+            raise ValueError(f"Unsupported prediction_loss: {prediction_loss}")
+
+        self.target_layer_norm = bool(target_layer_norm)
+        if self.target_layer_norm:
+            if self.prediction_loss != "mse":
+                raise ValueError("Target normalization requires MSE")
+            self.jepa_loss = TargetNormalizedMSE()
 
         self.momentum_scheduler = None
         if not isinstance(moving_average_decay, float):
@@ -149,6 +177,12 @@ class XelaJEPAModule(Module, nn.Module):
         self.step = -1
         self._schedule_step = 0
         self._schedule_total_steps = None
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.deterministic_teacher:
+            self.target_encoder.eval()
+        return self
 
     def log_on_batch_end(self, outputs, stage: Literal["train", "val"] = "train", trainer_instance=None):
         ssl_loss = outputs["ssl_loss"]
@@ -407,7 +441,7 @@ class XelaJEPAModule(Module, nn.Module):
 
         if isinstance(target_masks, torch.Tensor):
             predictor_out, target_masked = predict_mask_group(target_masks)
-            return self.jepa_loss(predictor_out, target_masked)
+            return self.jepa_loss(predictor_out, target_masked).mean()
 
         # Predictor batches masks with the same token count. Loss is first
         # reduced per target, then averaged across targets, so large global
@@ -422,7 +456,7 @@ class XelaJEPAModule(Module, nn.Module):
             mask_group = torch.stack(same_size_masks, dim=0)
             predictor_out, target_masked = predict_mask_group(mask_group)
             per_target_losses.append(
-                F.mse_loss(predictor_out, target_masked, reduction="none").mean(
+                self.jepa_loss(predictor_out, target_masked).mean(
                     dim=(0, 2, 3, 4, 5)
                 )
             )

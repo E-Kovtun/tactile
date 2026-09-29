@@ -27,6 +27,7 @@ class CachedDecoSSLDataset(Dataset):
         cache_root: str | Path,
         split: str,
         manifest_path: str | Path | None = None,
+        include_graph: bool = False,
     ) -> None:
         self.cache_root = Path(cache_root).expanduser().resolve()
         self.manifest_path = (
@@ -53,6 +54,11 @@ class CachedDecoSSLDataset(Dataset):
         }
         self._arrays: dict[str, np.ndarray] | None = None
         self._validate_arrays()
+        self.graph = None
+        if include_graph:
+            from tactile_ssl.data.deco_geometry import build_deco_geometry
+
+            self.graph = build_deco_geometry().graph_dict()
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -96,11 +102,15 @@ class CachedDecoSSLDataset(Dataset):
         # Copy one 31 KiB window out of the read-only mmap. This avoids writable
         # NumPy warnings and lets pinned-memory workers transfer it asynchronously.
         sensor = np.array(arrays["sensor"][index], copy=True)
-        return {
+        sample = {
             "sensor": torch.from_numpy(sensor),
             "sample_id": torch.tensor(int(arrays["sample_id"][index]), dtype=torch.long),
             "group_id": torch.tensor(int(arrays["group_id"][index]), dtype=torch.long),
         }
+
+        if self.graph is not None:
+            sample["graph"] = self.graph
+        return sample
 
 
 class EpisodeDiverseBatchSampler(Sampler[list[int]]):
@@ -249,13 +259,18 @@ class EpisodeDiverseBatchSampler(Sampler[list[int]]):
 def create_cached_deco_ssl_datasets(
     cache_root: str,
     cache_manifest_path: str | None = None,
+    include_graph: bool = False,
+    split_seed: int = 42,
     **_: Any,
 ):
+    if int(split_seed) != 42:
+        raise ValueError("DECO SSL cache uses the fixed episode split seed 42")
     datasets = {
         split: CachedDecoSSLDataset(
             cache_root,
             split,
             manifest_path=cache_manifest_path,
+            include_graph=include_graph,
         )
         for split in ("train", "val", "test")
     }

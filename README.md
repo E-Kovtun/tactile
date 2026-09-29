@@ -136,6 +136,20 @@ python train.py --config-name deco/pretrain/jepa
 
 The main JEPA presets use four GPUs; `batch_size` is **per GPU** (Xela/Socks: 64, DECO: 512). On a smaller machine, set `trainer.devices=1`; changing the device count or batch size changes the effective batch and is not an identical reproduction. Baseline hardware settings vary by preset. Restrict GPU visibility with `CUDA_VISIBLE_DEVICES` when sharing a machine.
 
+### DECO training recipe
+
+The optional `deco/pretrain/jepa_wd01` preset improves the DECO training recipe without changing the encoder architecture. It uses shuffled batches, uniformly cropped context masks, a deterministic EMA teacher (evaluation mode), and weight decay scheduled from 0.04 to 0.1. Raw context covers 85–100% of tokens before target exclusion; each target covers 30–40% of one hand. Pairwise target overlap is capped at 20% of the smaller target. The loss remains MSE.
+
+Prepare the tactile cache with `python scripts/prepare_data.py deco --stage pretrain`, then run:
+
+```bash
+python train.py --config-name deco/pretrain/jepa_wd01
+```
+
+In follow-up experiments, this recipe achieved **DECO policy test RMSE 0.43880 ± 0.00185**, compared with **0.43996 ± 0.00288** for MAE (lower is better). Each result summarizes 3 pretraining seeds × 4 head seeds; ± is the standard deviation across the 12 heads, not a confidence interval. These are follow-up results, separate from the paper's original JEPA configuration.
+
+Ablations use overrides on this single preset: `algorithm.deterministic_teacher=false`, `algorithm.prediction_loss=smooth_l1 algorithm.smooth_l1_beta=1.0`, `algorithm.target_layer_norm=true` (MSE only), `algorithm.encoder.drop_path_rate=0.1`, or `algorithm.wd_scheduler_cfg.final_weight_decay=0.4`. Mask options are `data.graph_mask_collator.random_context_crop` and `data.graph_mask_collator.max_target_overlap` (`null` disables the cap). Existing presets retain their original defaults; omitted algorithm options use MSE, a teacher that follows training mode, and no additional target normalization.
+
 ### Downstream tasks
 
 Sparsh-skin uses the force, object, and pose entrypoints; Socks has separate action and pose entrypoints, and DECO uses its policy entrypoint. Set `checkpoint` to the matching pretrained encoder:
