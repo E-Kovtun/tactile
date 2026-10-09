@@ -1,0 +1,150 @@
+paths:
+  data_root: ./sparsh-skin-dataset
+  log_dir: ./experiments/
+  tensorboard_dir: ./lightning_logs/
+  encoder_checkpoint_root: ./scripts/outputs/xela_dinov2/pretrain/pretrain_dinov2_encoder_dinov2/2026.07.06_09-46/checkpoints
+  output_dir: ${hydra:runtime.output_dir}
+  work_dir: ${hydra:runtime.cwd}
+tensorboard:
+  log_dir: ${hydra:runtime.output_dir}/tensorboard
+data:
+  train_data_budget: 1.0
+  val_data_budget: 1.0
+  max_train_data: 20000
+  sensor: xela
+  cache:
+    enabled: true
+    root: ${paths.work_dir}/.cache/xela_artifacts
+    force_recompute: false
+    log_hits: true
+    num_workers: 4
+  dataset:
+    _target_: tactile_ssl.data.xela_pose_estimation.RelativePoseDataset.create_train_val_test_from_files
+    data_path: ${paths.data_root}/downstream_tasks/relative_pose_estimation
+    urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+    baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
+    config:
+      discretize: null
+      subtract_baseline: true
+      normalize: false
+      window_time: 10
+      interpolating_freq: 100
+      train_data_budget: ${train_data_budget}
+      val_data_budget: ${val_data_budget}
+      val_ratio: 0.2
+      cache: ${data.cache}
+  train_dataloader:
+    batch_size: 16
+    num_workers: 1
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+    shuffle: true
+  val_dataloader:
+    batch_size: 16
+    num_workers: 1
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+    shuffle: false
+  test_dataloader:
+    batch_size: 16
+    num_workers: 1
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+    shuffle: false
+task_name: downstream_pose_estimation_comparison
+ssl_model_size: tiny
+experiment_name: ${task_name}_${ssl_name}
+seed: 3407
+run_name: xmg-a2-lr5e5-p42-pose-h3407
+trainer:
+  devices: 1
+  max_epochs: 25
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  checkpoint_interval_type: log
+  max_task_checkpoints: 10
+  save_probe_weights_only: true
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+  early_stopping_delta: 1.0e-05
+  enable_progress_bar: true
+task:
+  _target_: tactile_ssl.downstream_task.xela_relativepose.XelaRelativePoseModule
+  checkpoint_task: null
+  encoder_window_batch_size: 512
+  model_encoder:
+    _target_: tactile_ssl.model.xela_${ssl_model_size}
+    in_dim: 368
+    in_chans: 3
+    sequence_length: 10
+    time_chunk_size: 10
+    num_register_tokens: 0
+    pos_embed_fn: learned
+    with_masktoken: false
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization: null
+    causal: false
+  model_task:
+    _target_: tactile_ssl.downstream_task.xela_relativepose.XelaRelativePoseDecoder
+    discretize: ${data.dataset.config.discretize}
+    embed_dim: ${ssl_model_size}
+    num_heads: 6
+    depth: 1
+  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/final_experiments_xela/mask_grid_2026.09.29/case-a2/pretrain-seed42/pretrain/checkpoints/epoch-0500.ckpt
+  train_encoder: false
+  encoder_type: ${ssl_name}
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.Adam
+    lr: 5.0e-05
+  scheduler_cfg: null
+model_info:
+  tiny:
+    embed_dim: 192
+    depth: 12
+    num_heads: 3
+    mlp_ratio: 4
+  small:
+    embed_dim: 384
+    depth: 12
+    num_heads: 3
+    mlp_ratio: 4
+  base:
+    embed_dim: 768
+    depth: 12
+    num_heads: 12
+    mlp_ratio: 4
+  large:
+    embed_dim: 1024
+    depth: 24
+    num_heads: 16
+    mlp_ratio: 4
+data_info:
+  full: Full
+  nature: Nature
+alg_info:
+  dino: DINO
+  jepa: JEPA
+  mae: MAE
+attn_info:
+  Attention: attn
+  MemEffAttention: attn
+  DiffAttention: diff_attn
+  MemEffDiffAttention: diff_attn
+jepa_pretrain:
+  display_name: JEPA (2, 4) — epoch 500
+  run_name: jepa_2c_4t_epoch500
+  checkpoint_encoder: /workspace-SR004.nfs2/konovalov/tactile/experiments/old_jepa/pretrain_transformer_encoder_jepa/2026.06.30_18-18/checkpoints/epoch-0500.ckpt
+ssl_name: jepa
+sensor: xela
+ckpt_path: null
+resume_id: null
+train_data_budget: 1.0
+val_data_budget: 1.0
+data_seed: 42
+queue_entrypoint: pose

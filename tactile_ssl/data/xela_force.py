@@ -2,6 +2,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Optional, List
 import pickle
 from pathlib import Path
+from tactile_ssl.data.xela.reproduction_order import episode_directories
 
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -537,7 +538,7 @@ class ForceDataset(data.Dataset):
         for stage in ["train", "val"]:
             if not (Path(data_path) / stage).exists():
                 continue
-            dataset_list = [p for p in (Path(data_path) / stage).iterdir() if p.is_dir()]
+            dataset_list = episode_directories(Path(data_path) / stage)
             dataset_.append(
                 ForceDataset(
                     config=config,

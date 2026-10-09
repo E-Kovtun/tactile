@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import torch.utils.data as data
 import copy 
+import math
 from functools import partial
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 import random
@@ -125,6 +126,7 @@ class XelaJEPAModule(Module, nn.Module):
         target_layer_norm: bool = False,
         prediction_loss: str = "mse",
         smooth_l1_beta: float = 1.0,
+        target_loss_size_power: float = 0.0,
     ):
         super().__init__()
 
@@ -145,6 +147,9 @@ class XelaJEPAModule(Module, nn.Module):
             zero_init_mask_tokens=True, depth=4)
 
         self.prediction_loss = str(prediction_loss).lower()
+        self.target_loss_size_power = float(target_loss_size_power)
+        if not math.isfinite(self.target_loss_size_power) or self.target_loss_size_power < 0:
+            raise ValueError("target_loss_size_power must be finite and nonnegative")
         if self.prediction_loss == "mse":
             self.jepa_loss = nn.MSELoss(reduction="none")
         elif self.prediction_loss == "smooth_l1":
@@ -189,6 +194,12 @@ class XelaJEPAModule(Module, nn.Module):
         if trainer_instance is not None and trainer_instance.should_log:
             step = trainer_instance.step
             trainer_instance.writer.add_scalar(f"{stage}/ssl_loss", ssl_loss, step)
+            tokenizer = getattr(self.context_encoder, "tokenizer", None)
+            if tokenizer is not None and hasattr(tokenizer, "diagnostics"):
+                for name, value in tokenizer.diagnostics().items():
+                    trainer_instance.writer.add_scalar(
+                        f"{stage}/tokenizer/{name}", value, step
+                    )
 
     def on_train_batch_end(self, outputs, batch, batch_idx, trainer_instance=None):
         if self.use_momentum:
@@ -443,16 +454,16 @@ class XelaJEPAModule(Module, nn.Module):
             predictor_out, target_masked = predict_mask_group(target_masks)
             return self.jepa_loss(predictor_out, target_masked).mean()
 
-        # Predictor batches masks with the same token count. Loss is first
-        # reduced per target, then averaged across targets, so large global
-        # masks do not outweigh small local masks merely by containing more
-        # sensor tokens.
+        # Reduce each target independently. By default every mask has equal
+        # weight; opt-in size weighting uses the actual sampled token counts.
         masks_by_size: Dict[int, List[torch.Tensor]] = {}
         for target_mask in target_masks:
             masks_by_size.setdefault(target_mask.shape[-1], []).append(target_mask)
 
         per_target_losses = []
+        target_token_counts = []
         for same_size_masks in masks_by_size.values():
+            target_token_counts.extend([same_size_masks[0].shape[-1]] * len(same_size_masks))
             mask_group = torch.stack(same_size_masks, dim=0)
             predictor_out, target_masked = predict_mask_group(mask_group)
             per_target_losses.append(
@@ -460,7 +471,15 @@ class XelaJEPAModule(Module, nn.Module):
                     dim=(0, 2, 3, 4, 5)
                 )
             )
-        return torch.cat(per_target_losses).mean()
+        return self._reduce_target_losses(torch.cat(per_target_losses), target_token_counts)
+
+    def _reduce_target_losses(self, losses, token_counts):
+        if self.target_loss_size_power == 0.0:
+            return losses.mean()
+        counts = torch.as_tensor(token_counts, device=losses.device, dtype=torch.float32)
+        weights = counts.pow(self.target_loss_size_power)
+        weights = weights / weights.sum()
+        return (losses.float() * weights).sum()
 
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict:
         self.step = self.step + 1

@@ -208,3 +208,8 @@ This codebase builds on [Sparsh / Sparsh-X / Sparsh-Skin](https://github.com/fac
 ## License
 
 See [LICENSE.md](LICENSE.md) for the repository license. Refer to the original releases for the terms governing third-party datasets and assets.
+
+
+## Xela experiment reproduction
+
+The [2026-10-09 Xela reproduction bundle](repro/xela_20261009/README.md) contains the full configurations, seeds, launch commands, data identities for all 38 experiment IDs in the privately retained workbook.

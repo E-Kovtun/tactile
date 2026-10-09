@@ -1,0 +1,196 @@
+paths:
+  data_root: ./sparsh-skin-dataset
+  log_dir: ./experiments/
+  tensorboard_dir: ./lightning_logs/
+  encoder_checkpoint_root: ./scripts/outputs/xela_dinov2/pretrain/pretrain_dinov2_encoder_dinov2/2026.07.06_09-46/checkpoints
+  output_dir: ${hydra:runtime.output_dir}
+  work_dir: ${hydra:runtime.cwd}
+tensorboard:
+  log_dir: ${hydra:runtime.output_dir}/tensorboard
+data:
+  train_dataloader:
+    batch_size: 256
+    num_workers: 8
+    shuffle: true
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+  val_dataloader:
+    batch_size: 64
+    num_workers: 8
+    shuffle: true
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+  normalization:
+    mean: null
+    std: null
+  object_classes: null
+  object_class_weights: null
+  cache:
+    enabled: true
+    root: ${paths.work_dir}/.cache/xela_artifacts
+    force_recompute: false
+    fingerprint_mode: stats
+    log_hits: true
+    num_workers: 32
+  preprocessing:
+    outlier_min: 20000
+    outlier_max: 60000
+    timestamp_policy: overlap_minmax_v1
+    baseline_policy: mean_over_all_baseline_frames_v1
+    numeric_policy: legacy_float64_v1
+  features:
+    use_spatial_coords: false
+  dataset_target: tactile_ssl.data.xela_tactile.XelaSSLDataset
+  graph:
+    enabled: false
+    type: physical
+    topology_mode: per_window
+    edge_attr_mode: distance
+    params:
+      bridge_k: 2
+  window_time: 0.1
+  window_overlap: 0.0
+  interpolating_freq: 100
+  sensor: xela
+  dataset_list:
+  - type: teleop
+    sequence_list:
+    - corn
+    - rubikscube
+    - metalcup
+    - cup
+    - ball
+    - drill
+    - mustard
+    - lego
+    - pringle
+    - legopool
+    - watermelon
+    - popcorn
+    - loofah
+    - slipper
+    train_dataset_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    val_dataset_ids:
+    - 9
+    dataset:
+      _target_: ${data.dataset_target}
+      config:
+        window_time: ${data.window_time}
+        window_overlap: ${data.window_overlap}
+        interpolating_freq: ${data.interpolating_freq}
+        subtract_baseline: true
+        smooth_data: false
+        bias_noise_std: 0
+        bias_range: 0
+        cache: ${data.cache}
+        preprocessing: ${data.preprocessing}
+        features: ${data.features}
+        graph: ${data.graph}
+      data_path: ${paths.data_root}/xela/pretraining/extracted
+      baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
+      xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+      load_images: false
+algorithm:
+  _target_: tactile_ssl.algorithm.SignalMAEModule
+  encoder:
+    _target_: tactile_ssl.model.xela_${model_size}
+    in_dim: 368
+    in_chans: 3
+    sequence_length: ${int_multiply:${data.window_time},${data.interpolating_freq}}
+    time_chunk_size: ${algorithm.encoder.sequence_length}
+    num_register_tokens: 1
+    pos_embed_fn: learned
+    with_masktoken: false
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization: ${data.normalization}
+    causal: false
+  mask_type: random
+  mask_ratio: 0.75
+  decoder:
+    _target_: tactile_ssl.probe.reconstruction.SignalMaskDecoder
+    in_dim: ${algorithm.encoder.in_dim}
+    in_chans: ${algorithm.encoder.in_chans}
+    sequence_length: ${algorithm.encoder.sequence_length}
+    time_chunk_size: ${algorithm.encoder.time_chunk_size}
+    input_embed_dim: ${model_embed_dim}
+    embed_dim: 192
+    depth: 4
+    num_heads: 12
+    pos_embed_fn: sinusoidal
+    mlp_ratio: 4.0
+    qkv_bias: true
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.AdamW
+    lr: 0.0001
+    weight_decay: 0.05
+  lr_scheduler_cfg:
+    _partial_: true
+    _target_: tactile_ssl.model.custom_scheduler.WarmupCosineScheduler
+    steps_per_epoch: ???
+    T_max: ???
+    final_lr: 1.0e-06
+    start_lr: 1.0e-05
+    warmup_epochs: 30
+  wd_scheduler_cfg:
+    _partial_: true
+    _target_: tactile_ssl.model.custom_scheduler.CosineWDSchedule
+    final_weight_decay: 0.4
+    ref_weight_decay: 0.04
+    T_max: ???
+  online_probes: []
+  online_probes_lrs: []
+model_info:
+  tiny:
+    embed_dim: 192
+    depth: 12
+    num_heads: 3
+    mlp_ratio: 4
+  small:
+    embed_dim: 384
+    depth: 12
+    num_heads: 3
+    mlp_ratio: 4
+  base:
+    embed_dim: 768
+    depth: 12
+    num_heads: 12
+    mlp_ratio: 4
+  large:
+    embed_dim: 1024
+    depth: 24
+    num_heads: 16
+    mlp_ratio: 4
+seed: 42
+model_size: tiny
+model_embed_dim: ${model_info.${model_size}.embed_dim}
+resume_id: null
+ckpt_path: /workspace-SR004.nfs2/konovalov/tactile/final_experiments_baselines/byol_mae_2026.09.02/xela/mae/pretrain-seed42/pretrain/checkpoints
+experiment_name: ${task_name}_${ssl_name}
+run_name: xela-mae-pretrainseed42
+trainer:
+  max_epochs: 500
+  grad_clip_norm: 10.0
+  validation_frequency: 5
+  checkpoint_frequency: 50
+  log_frequency: 500
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  devices: 1
+  precision: bf16-mixed
+  max_steps: 292000
+  enable_progress_bar: true
+task_name: pretrain_xela_encoder
+ssl_name: mae
+ssl_model_size: tiny

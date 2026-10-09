@@ -1368,6 +1368,54 @@ def _batched_node_group_ids(
     return group_ids
 
 
+def _sample_overlap_constrained_random(num_nodes, size, previous, limits, node_groups, generator):
+    """Same sequential sampler and RNG draws, using bit sets for eligibility."""
+    membership = [0] * num_nodes
+    remaining = []
+    blocked = 0
+    for i, (prior, limit) in enumerate(zip(previous, limits)):
+        bit = 1 << i
+        for node in prior.tolist():
+            membership[node] |= bit
+        cap = math.floor(limit * min(size, prior.numel()) + 1e-12)
+        remaining.append(cap)
+        if cap == 0:
+            blocked |= bit
+    available = [True] * num_nodes
+    selected = []
+
+    def take(node):
+        nonlocal blocked
+        selected.append(node)
+        available[node] = False
+        pattern = membership[node]
+        while pattern:
+            bit = pattern & -pattern
+            index = bit.bit_length() - 1
+            remaining[index] -= 1
+            if remaining[index] == 0:
+                blocked |= bit
+            pattern ^= bit
+
+    if node_groups is not None:
+        grouped = {}
+        for node, group in enumerate(node_groups.tolist()):
+            grouped.setdefault(group, []).append(node)
+        groups = sorted(grouped)
+        for group_index in torch.randperm(len(groups), generator=generator).tolist():
+            choices = [n for n in grouped[groups[group_index]]
+                       if available[n] and not membership[n] & blocked]
+            if not choices:
+                return None
+            take(choices[int(torch.randint(len(choices), (1,), generator=generator))])
+    for node in torch.randperm(num_nodes, generator=generator).tolist():
+        if len(selected) == size:
+            break
+        if available[node] and not membership[node] & blocked:
+            take(node)
+    return torch.tensor(selected, dtype=torch.long) if len(selected) == size else None
+
+
 def sample_multiblock_graph_masks(
     *,
     graph_info: Mapping,
@@ -1387,6 +1435,9 @@ def sample_multiblock_graph_masks(
     target_groups: Optional[Sequence[Mapping]] = None,
     device: Optional[torch.device] = None,
     generator: Optional[torch.Generator] = None,
+    random_context_crop: bool = False,
+    overlap_relative_to_smaller: bool = False,
+    constrained_random_sampling: bool = False,
 ) -> tuple[torch.Tensor, Union[torch.Tensor, list[torch.Tensor]]]:
     """Sample I-JEPA-style graph regions for a padded batch of sensor graphs."""
     if num_context_masks <= 0 or num_target_masks <= 0:
@@ -1544,6 +1595,23 @@ def sample_multiblock_graph_masks(
                         )
                     for effective_max_overlap in overlap_thresholds:
                         for _ in range(max_resample_attempts):
+                            prior = targets + group_targets
+                            if constrained_random_sampling and prior and group["strategy"] in {"random", "stratified_random"}:
+                                if not overlap_relative_to_smaller:
+                                    raise ValueError("Constrained sampler requires overlap_relative_to_smaller")
+                                if group["strategy"] == "stratified_random" and group["min_per_group"] != 1:
+                                    raise ValueError("Constrained stratification supports min_per_group=1")
+                                candidate = _sample_overlap_constrained_random(
+                                    num_nodes, group_target_size, prior,
+                                    [group["max_previous_overlap_ratio"]] * len(targets)
+                                    + [effective_max_overlap] * len(group_targets),
+                                    batched_node_group_ids[sample_id] if group["strategy"] == "stratified_random" else None,
+                                    generator,
+                                )
+                                if candidate is not None:
+                                    accepted_target = candidate
+                                    break
+                                continue
                             candidate = _sample_region(
                                 graph,
                                 group_target_size,
@@ -1566,7 +1634,7 @@ def sample_multiblock_graph_masks(
                             )
                             pairwise_overlap_valid = effective_max_overlap >= 1.0 or all(
                                 torch.isin(candidate, previous).sum().item()
-                                / float(candidate.numel())
+                                / float(min(candidate.numel(), previous.numel()) if overlap_relative_to_smaller else candidate.numel())
                                 <= effective_max_overlap
                                 for previous in group_targets
                             )
@@ -1574,7 +1642,7 @@ def sample_multiblock_graph_masks(
                                 group["max_previous_overlap_ratio"] >= 1.0
                                 or all(
                                     torch.isin(candidate, previous).sum().item()
-                                    / float(candidate.numel())
+                                    / float(min(candidate.numel(), previous.numel()) if overlap_relative_to_smaller else candidate.numel())
                                     <= group["max_previous_overlap_ratio"]
                                     for previous in targets
                                 )
@@ -1645,7 +1713,10 @@ def sample_multiblock_graph_masks(
             torch.stack(
                 [
                     torch.sort(
-                        all_contexts[batch_id][context_id][:common_context_size]
+                        all_contexts[batch_id][context_id][
+                            torch.randperm(all_contexts[batch_id][context_id].numel(), generator=generator)[:common_context_size]
+                            if random_context_crop else slice(None, common_context_size)
+                        ]
                     ).values
                     for batch_id in range(batch_size)
                 ]
@@ -1752,6 +1823,9 @@ class JEPAGraphMaskCollator:
             context_growth=str(context_cfg.get("growth", "dijkstra")),
             target_growth=str(target_cfg.get("growth", "dijkstra")),
             target_groups=target_cfg.get("groups"),
+            random_context_crop=bool(context_cfg.get("random_crop", False)),
+            overlap_relative_to_smaller=bool(self.masking.get("overlap_relative_to_smaller", False)),
+            constrained_random_sampling=bool(self.masking.get("constrained_random_sampling", False)),
             min_context_keep_tokens=int(self.masking.get("min_context_keep_tokens", 32)),
             min_context_keep_ratio=float(self.masking.get("min_context_keep_ratio", 0.15)),
             max_resample_attempts=int(self.masking.get("max_resample_attempts", 32)),

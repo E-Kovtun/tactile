@@ -1,0 +1,358 @@
+{
+  "scope": {
+    "configurations": 38,
+    "pretrains": 102,
+    "heads": 1026
+  },
+  "checks": {
+    "configs_models": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "-m",
+        "repro.xela_20261009.run",
+        "validate",
+        "--models"
+      ]
+    },
+    "regressions": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--basetemp",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela_repro_export_20261009/checks/pytest_retry",
+        "tests/test_jepa_graph_masking.py",
+        "tests/test_jepa_batch_policy.py",
+        "tests/test_xela_ijepa_2d.py",
+        "tests/test_xela_repro_protocol.py"
+      ]
+    },
+    "loss_weighting": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "tests/test_xela_target_loss_size_weighting.py"
+      ]
+    },
+    "data_sizes": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "-m",
+        "repro.xela_20261009.run",
+        "verify-data"
+      ]
+    },
+    "imports": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "-c",
+        "import tactile_ssl;from pathlib import Path;print(tactile_ssl.__file__);assert Path(tactile_ssl.__file__).resolve().is_relative_to(Path.cwd())"
+      ]
+    },
+    "diff_check": {
+      "returncode": 0,
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ]
+    },
+    "hydra_0_pretrain": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "train.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/0/p42",
+        "--config-name",
+        "pretrain",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_a8_pretrain": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "train.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/a8/p42",
+        "--config-name",
+        "pretrain",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_bal-mix_pretrain": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "train.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/bal-mix/p42",
+        "--config-name",
+        "pretrain",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_ijepa_pretrain": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "train.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/ijepa/p42",
+        "--config-name",
+        "pretrain",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_mae_pretrain": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "train.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/mae/p42",
+        "--config-name",
+        "pretrain",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_0_force-h42": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "scripts/train_task_seed_isolated.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/0/p42",
+        "--config-name",
+        "force-h42",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_0_object-h42": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "scripts/train_task_seed_isolated.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/0/p42",
+        "--config-name",
+        "object-h42",
+        "--cfg",
+        "job"
+      ]
+    },
+    "hydra_0_pose-h42": {
+      "returncode": 0,
+      "command": [
+        "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+        "scripts/train_task_seed_isolated.py",
+        "--config-path",
+        "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-20261009/repro/xela_20261009/configs/0/p42",
+        "--config-name",
+        "pose-h42",
+        "--cfg",
+        "job"
+      ]
+    }
+  },
+  "config_model_results": {
+    "stages": 1128,
+    "targets": 23,
+    "models": 41,
+    "construction_fixtures": "Data-dependent normalization uses zero/one and class lists use 14 placeholder labels; saved training configs are unchanged.",
+    "errors": []
+  },
+  "regression_summary": "44 passed, 10 warnings in 12.84s",
+  "loss_weighting": "PASS: forward, grouped weights, gradients, equal-size parity, legacy exact reduction, config-only ablation",
+  "data_files": 928,
+  "data_content_hashes_verified": true,
+  "validation_device": "CPU only; the variable-mask forward/backward regression uses dense attention in the test fixture. Training retains its original attention implementation.",
+  "limits": [
+    "No full 500-epoch retraining",
+    "Fresh Conda installation on another machine not exercised",
+    "Unknown historical per-stage code revisions cannot be reconstructed"
+  ],
+  "clean_checkout": {
+    "commit": "ba1b5b7c3bc8683a2384d667187927117e11d6ea",
+    "source_only": true,
+    "checks": {
+      "configs_models": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "-m",
+          "repro.xela_20261009.run",
+          "validate",
+          "--models"
+        ]
+      },
+      "regressions": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "-m",
+          "pytest",
+          "-q",
+          "--basetemp",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela_repro_export_20261009/clean_checks/pytest_temp",
+          "tests/test_jepa_graph_masking.py",
+          "tests/test_jepa_batch_policy.py",
+          "tests/test_xela_ijepa_2d.py",
+          "tests/test_xela_repro_protocol.py"
+        ]
+      },
+      "loss_weighting": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "tests/test_xela_target_loss_size_weighting.py"
+        ]
+      },
+      "data_sizes": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "-m",
+          "repro.xela_20261009.run",
+          "verify-data"
+        ]
+      },
+      "imports": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "-c",
+          "import tactile_ssl;from pathlib import Path;print(tactile_ssl.__file__);assert Path(tactile_ssl.__file__).resolve().is_relative_to(Path.cwd())"
+        ]
+      },
+      "diff_check": {
+        "returncode": 0,
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ]
+      },
+      "hydra_0_pretrain": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "train.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/0/p42",
+          "--config-name",
+          "pretrain",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_a8_pretrain": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "train.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/a8/p42",
+          "--config-name",
+          "pretrain",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_bal-mix_pretrain": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "train.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/bal-mix/p42",
+          "--config-name",
+          "pretrain",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_ijepa_pretrain": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "train.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/ijepa/p42",
+          "--config-name",
+          "pretrain",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_mae_pretrain": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "train.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/mae/p42",
+          "--config-name",
+          "pretrain",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_0_force-h42": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "scripts/train_task_seed_isolated.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/0/p42",
+          "--config-name",
+          "force-h42",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_0_object-h42": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "scripts/train_task_seed_isolated.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/0/p42",
+          "--config-name",
+          "object-h42",
+          "--cfg",
+          "job"
+        ]
+      },
+      "hydra_0_pose-h42": {
+        "returncode": 0,
+        "command": [
+          "/workspace-SR004.nfs2/konovalov/conda_tactile_env/bin/python",
+          "scripts/train_task_seed_isolated.py",
+          "--config-path",
+          "/workspace-SR004.nfs2/konovalov/tactile/.agent_tmp/xela-repro-clean-20261009/repro/xela_20261009/configs/0/p42",
+          "--config-name",
+          "pose-h42",
+          "--cfg",
+          "job"
+        ]
+      }
+    },
+    "regression_summary": "44 passed, 10 warnings in 14.77s"
+  },
+  "followup_review": "After the clean checkout checks, restored the original CPU-thread allocation: Force/Object=1, Pose/pretrain=4. Configs, models, data and training entrypoints unchanged.",
+  "private_reference_statistics_verified_locally": true,
+  "public_scope": "Source code, configurations, data identities and protocol only. The private workbook and numerical experiment results are excluded, including from branch history."
+}

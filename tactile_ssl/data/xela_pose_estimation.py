@@ -2,6 +2,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Optional, List
 import pickle
 from pathlib import Path
+from tactile_ssl.data.xela.reproduction_order import episode_directories
 
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -473,10 +474,10 @@ class RelativePoseDataset(data.Dataset):
     def create_from_files(data_path, urdf_path, baseline_signal_path, config):
         dataset_ = []
         for stage in ["train", "val"]:
-            object_paths = [p for p in (Path(data_path) / stage).iterdir() if p.is_dir()]
+            object_paths = episode_directories(Path(data_path) / stage)
             dataset_list = []
             for object_path in object_paths:
-                dataset_list.extend([p for p in object_path.iterdir() if p.is_dir()])
+                dataset_list.extend(episode_directories(object_path))
 
             data_budget = config.train_data_budget if stage == "train" else config.val_data_budget
             data_budget = round(data_budget * len(dataset_list))
@@ -496,10 +497,10 @@ class RelativePoseDataset(data.Dataset):
 
     @staticmethod
     def create_train_val_test_from_files(data_path, urdf_path, baseline_signal_path, config):
-        full_train_object_paths = [p for p in (Path(data_path) / "train").iterdir() if p.is_dir()]
+        full_train_object_paths = episode_directories(Path(data_path) / "train")
         full_train_dataset_list = []
         for object_path in full_train_object_paths:
-            full_train_dataset_list.extend([p for p in object_path.iterdir() if p.is_dir()])
+            full_train_dataset_list.extend(episode_directories(object_path))
 
         full_train_dataset_list_shuffled = np.random.permutation(full_train_dataset_list)
         full_train_len = len(full_train_dataset_list)
@@ -530,10 +531,10 @@ class RelativePoseDataset(data.Dataset):
                         baseline_signal_path=baseline_signal_path,
                     )
 
-        test_object_paths = [p for p in (Path(data_path) / "val").iterdir() if p.is_dir()]
+        test_object_paths = episode_directories(Path(data_path) / "val")
         test_dataset_list = []
         for object_path in test_object_paths:
-            test_dataset_list.extend([p for p in object_path.iterdir() if p.is_dir()])
+            test_dataset_list.extend(episode_directories(object_path))
         
         test_dset = RelativePoseDataset(
                         config=config,

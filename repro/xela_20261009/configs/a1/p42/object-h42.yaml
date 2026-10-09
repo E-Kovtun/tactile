@@ -1,0 +1,187 @@
+paths:
+  data_root: ${oc.env:XELA_DATA_ROOT}
+  log_dir: ${hydra:runtime.output_dir}
+  tensorboard_dir: ${hydra:runtime.output_dir}/tensorboard
+  encoder_checkpoint_root: ${oc.env:XELA_REPRO_OUTPUT_ROOT}
+  output_dir: ${hydra:runtime.output_dir}
+  work_dir: ${hydra:runtime.cwd}
+tensorboard:
+  log_dir: ${hydra:runtime.output_dir}/tensorboard
+data:
+  train_data_budget: 1.0
+  train_dataloader:
+    batch_size: 64
+    num_workers: 8
+    shuffle: true
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+  val_dataloader:
+    batch_size: 64
+    num_workers: 8
+    shuffle: false
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+  test_dataloader:
+    batch_size: 64
+    num_workers: 8
+    shuffle: false
+    drop_last: true
+    pin_memory: true
+    persistent_workers: true
+  normalization:
+    mean: null
+    std: null
+  object_classes: null
+  object_class_weights: null
+  cache:
+    enabled: true
+    root: ${oc.env:XELA_REPRO_CACHE_ROOT}
+    force_recompute: false
+    fingerprint_mode: stats
+    log_hits: true
+    num_workers: 4
+  window_time: 0.1
+  window_overlap: 0.0
+  interpolating_freq: 100
+  sensor: xela
+  dataset_list:
+  - type: teleop
+    sequence_list:
+    - corn
+    - rubikscube
+    - metalcup
+    - cup
+    - ball
+    - drill
+    - mustard
+    - lego
+    - pringle
+    - legopool
+    - watermelon
+    - popcorn
+    - loofah
+    - slipper
+    train_dataset_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    val_dataset_ids:
+    - 8
+    test_dataset_ids:
+    - 9
+    dataset:
+      _target_: tactile_ssl.data.xela_tactile.XelaSSLDataset
+      config:
+        window_time: ${data.window_time}
+        window_overlap: ${data.window_overlap}
+        interpolating_freq: ${data.interpolating_freq}
+        subtract_baseline: true
+        smooth_data: false
+        bias_noise_std: 0
+        bias_range: 0
+        cache: ${data.cache}
+      data_path: ${paths.data_root}/xela/pretraining/extracted
+      baseline_signal_path: ${paths.data_root}/xela/pretraining/extracted/baseline/xela/data.pkl
+      xela_urdf_path: ${paths.data_root}/xela/pretraining/extracted/urdf/ahrcpcpn.urdf
+      load_images: false
+task_name: downstream_object_classification_comparison
+ssl_model_size: tiny
+experiment_name: ${task_name}_${ssl_name}
+seed: 42
+run_name: xmg-a1-p42-object-h42
+trainer:
+  devices: 1
+  max_epochs: 100
+  validation_frequency: 1
+  sanity_validate: true
+  save_checkpoint_dir: ${paths.output_dir}/checkpoints
+  checkpoint_interval_type: log
+  max_task_checkpoints: 10
+  save_probe_weights_only: true
+  early_stopping_enabled: true
+  early_stopping_patience: 10
+  early_stopping_delta: 1.0e-05
+  enable_progress_bar: true
+task:
+  _target_: tactile_ssl.downstream_task.XelaObjectSLModule
+  checkpoint_task: null
+  model_encoder:
+    _target_: tactile_ssl.model.xela_${ssl_model_size}
+    in_dim: 368
+    in_chans: 3
+    sequence_length: 10
+    time_chunk_size: 10
+    num_register_tokens: 0
+    pos_embed_fn: learned
+    with_masktoken: false
+    drop_path_rate: 0.3
+    drop_path_uniform: true
+    normalization: null
+    causal: false
+  model_task:
+    _target_: tactile_ssl.downstream_task.XelaObjectTokenMLPClassifier
+    input_embed_dim: ${model_info.${ssl_model_size}.embed_dim}
+    classes: ${data.object_classes}
+    class_weights: ${data.object_class_weights}
+    pooling_type: attention
+    num_heads: 2
+    hidden_dim: 48
+  checkpoint_encoder: ${oc.env:XELA_REPRO_OUTPUT_ROOT}/a1/p42/pretrain/checkpoints/epoch-0500.ckpt
+  train_encoder: false
+  encoder_type: ${ssl_name}
+  optim_cfg:
+    _partial_: true
+    _target_: torch.optim.AdamW
+    lr: 0.0001
+    weight_decay: 0.05
+  scheduler_cfg: null
+model_info:
+  tiny:
+    embed_dim: 192
+    depth: 12
+    num_heads: 3
+    mlp_ratio: 4
+  small:
+    embed_dim: 384
+    depth: 12
+    num_heads: 3
+    mlp_ratio: 4
+  base:
+    embed_dim: 768
+    depth: 12
+    num_heads: 12
+    mlp_ratio: 4
+  large:
+    embed_dim: 1024
+    depth: 24
+    num_heads: 16
+    mlp_ratio: 4
+data_info:
+  full: Full
+  nature: Nature
+alg_info:
+  dino: DINO
+  jepa: JEPA
+  mae: MAE
+attn_info:
+  Attention: attn
+  MemEffAttention: attn
+  DiffAttention: diff_attn
+  MemEffDiffAttention: diff_attn
+jepa_pretrain:
+  display_name: JEPA (2, 4) — epoch 500
+  run_name: jepa_2c_4t_epoch500
+  checkpoint_encoder: ${oc.env:XELA_REPRO_OUTPUT_ROOT}/a1/p42/pretrain/checkpoints/epoch-0500.ckpt
+sensor: xela
+ssl_name: jepa
+ckpt_path: null
+resume_id: null
+data_seed: 42
+queue_entrypoint: object
